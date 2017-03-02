@@ -20,8 +20,6 @@ LOCAL_PATH:= $(call my-dir)
 ################################################################################
 include $(CLEAR_VARS)
 
-CFG_TEEC_PUBLIC_INCLUDE := $(ANDROID_BUILD_TOP)/hardware/renesas/optee-client/public
-
 LOCAL_MODULE := keystore.salvator
 LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_MODULE_TAGS := optional
@@ -35,12 +33,13 @@ LOCAL_SRC_FILES := \
 	optee_keymaster_ipc.c
 
 LOCAL_C_INCLUDES := \
-	$(CFG_TEEC_PUBLIC_INCLUDE) \
+	hardware/renesas/optee-client/public \
 	$(LOCAL_PATH)/ta/include
 
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
-	libteec
+	libteec \
+	liblog
 
 include $(BUILD_SHARED_LIBRARY)
 

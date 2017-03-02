@@ -1,3 +1,20 @@
+/*
+ *
+ * Copyright (C) 2017 GlobalLogic
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef ANDROID_OPTEE_TA_CA_DEFS_H
 #define ANDROID_OPTEE_TA_CA_DEFS_H
 
@@ -11,6 +28,9 @@ extern "C" {
 
 #define STR_TRACE_USER_TA "KEYSTORE"
 
+/**
+ * Structures and enums have been taken from keymaster_defs.h
+ */
 /**
  * Authorization tags each have an associated type.  This enumeration facilitates tagging each with
  * a type, by using the high four bits (of an implied 32-bit unsigned enum value) to specify up to
@@ -137,6 +157,123 @@ typedef enum {
 } keymaster_tag_t;
 
 /**
+ * Algorithms that may be provided by keymaster implementations.  Those that must be provided by all
+ * implementations are tagged as "required".
+ */
+typedef enum {
+    /* Asymmetric algorithms. */
+    KM_ALGORITHM_RSA = 1,
+    // KM_ALGORITHM_DSA = 2, -- Removed, do not re-use value 2.
+    KM_ALGORITHM_EC = 3,
+
+    /* Block ciphers algorithms */
+    KM_ALGORITHM_AES = 32,
+
+    /* MAC algorithms */
+    KM_ALGORITHM_HMAC = 128,
+} keymaster_algorithm_t;
+
+/**
+ * Padding modes that may be applied to plaintext for encryption operations.  This list includes
+ * padding modes for both symmetric and asymmetric algorithms.  Note that implementations should not
+ * provide all possible combinations of algorithm and padding, only the
+ * cryptographically-appropriate pairs.
+ */
+typedef enum {
+    KM_PAD_NONE = 1, /* deprecated */
+    KM_PAD_RSA_OAEP = 2,
+    KM_PAD_RSA_PSS = 3,
+    KM_PAD_RSA_PKCS1_1_5_ENCRYPT = 4,
+    KM_PAD_RSA_PKCS1_1_5_SIGN = 5,
+    KM_PAD_PKCS7 = 64,
+} keymaster_padding_t;
+
+/**
+ * Symmetric block cipher modes provided by keymaster implementations.
+ */
+typedef enum {
+    /* Unauthenticated modes, usable only for encryption/decryption and not generally recommended
+     * except for compatibility with existing other protocols. */
+    KM_MODE_ECB = 1,
+    KM_MODE_CBC = 2,
+    KM_MODE_CTR = 3,
+
+    /* Authenticated modes, usable for encryption/decryption and signing/verification.  Recommended
+     * over unauthenticated modes for all purposes. */
+    KM_MODE_GCM = 32,
+} keymaster_block_mode_t;
+
+/**
+ * Digests provided by keymaster implementations.
+ */
+typedef enum {
+    KM_DIGEST_NONE = 0,
+    KM_DIGEST_MD5 = 1, /* Optional, may not be implemented in hardware, will be handled in software
+                        * if needed. */
+    KM_DIGEST_SHA1 = 2,
+    KM_DIGEST_SHA_2_224 = 3,
+    KM_DIGEST_SHA_2_256 = 4,
+    KM_DIGEST_SHA_2_384 = 5,
+    KM_DIGEST_SHA_2_512 = 6,
+} keymaster_digest_t;
+
+/*
+ * Key derivation functions, mostly used in ECIES.
+ */
+typedef enum {
+    /* Do not apply a key derivation function; use the raw agreed key */
+    KM_KDF_NONE = 0,
+    /* HKDF defined in RFC 5869 with SHA256 */
+    KM_KDF_RFC5869_SHA256 = 1,
+    /* KDF1 defined in ISO 18033-2 with SHA1 */
+    KM_KDF_ISO18033_2_KDF1_SHA1 = 2,
+    /* KDF1 defined in ISO 18033-2 with SHA256 */
+    KM_KDF_ISO18033_2_KDF1_SHA256 = 3,
+    /* KDF2 defined in ISO 18033-2 with SHA1 */
+    KM_KDF_ISO18033_2_KDF2_SHA1 = 4,
+    /* KDF2 defined in ISO 18033-2 with SHA256 */
+    KM_KDF_ISO18033_2_KDF2_SHA256 = 5,
+} keymaster_kdf_t;
+
+/**
+ * Supported EC curves, used in ECDSA/ECIES.
+ */
+typedef enum {
+    KM_EC_CURVE_P_224 = 0,
+    KM_EC_CURVE_P_256 = 1,
+    KM_EC_CURVE_P_384 = 2,
+    KM_EC_CURVE_P_521 = 3,
+} keymaster_ec_curve_t;
+
+/**
+ * The origin of a key (or pair), i.e. where it was generated.  Note that KM_TAG_ORIGIN can be found
+ * in either the hardware-enforced or software-enforced list for a key, indicating whether the key
+ * is hardware or software-based.  Specifically, a key with KM_ORIGIN_GENERATED in the
+ * hardware-enforced list is guaranteed never to have existed outide the secure hardware.
+ */
+typedef enum {
+    KM_ORIGIN_GENERATED = 0, /* Generated in keymaster.  Should not exist outside the TEE. */
+    KM_ORIGIN_DERIVED = 1,   /* Derived inside keymaster.  Likely exists off-device. */
+    KM_ORIGIN_IMPORTED = 2,  /* Imported into keymaster.  Existed as cleartext in Android. */
+    KM_ORIGIN_UNKNOWN = 3,   /* Keymaster did not record origin.  This value can only be seen on
+                              * keys in a keymaster0 implementation.  The keymaster0 adapter uses
+                              * this value to document the fact that it is unkown whether the key
+                              * was generated inside or imported into keymaster. */
+} keymaster_key_origin_t;
+
+/**
+ * Usability requirements of key blobs.  This defines what system functionality must be available
+ * for the key to function.  For example, key "blobs" which are actually handles referencing
+ * encrypted key material stored in the file system cannot be used until the file system is
+ * available, and should have BLOB_REQUIRES_FILE_SYSTEM.  Other requirements entries will be added
+ * as needed for implementations.
+ */
+typedef enum {
+    KM_BLOB_STANDALONE = 0,
+    KM_BLOB_REQUIRES_FILE_SYSTEM = 1,
+} keymaster_key_blob_usage_requirements_t;
+
+/**
  * Possible purposes of a key (or pair).
  */
 typedef enum {
@@ -148,7 +285,7 @@ typedef enum {
 } keymaster_purpose_t;
 
 typedef struct {
-	const uint8_t* data;
+	/*const*/ uint8_t* data;
 	size_t data_length;
 } keymaster_blob_t;
 
@@ -182,7 +319,7 @@ typedef struct {
 } keymaster_key_characteristics_t;
 
 typedef struct {
-	const uint8_t* key_material;
+	/*const*/ uint8_t* key_material;
 	size_t key_material_size;
 } keymaster_key_blob_t;
 
@@ -283,8 +420,32 @@ static inline keymaster_tag_type_t keymaster_tag_get_type(keymaster_tag_t tag) {
 	return (keymaster_tag_type_t)(tag & (0xF << 28));
 }
 
-#ifdef __cplusplus
-}  // extern "C"
-#endif  // __cplusplus
+/**
+ * Structure hw_auth_token_t and enum hw_authenticator_type_t have been taken from hw_auth_token.h
+ */
+/**
+ * Data format for an authentication record used to prove successful authentication.
+ */
+typedef struct __attribute__((__packed__)) {
+    uint8_t version;  /* Current version is 0 */
+    uint64_t challenge;
+    uint64_t user_id;             /* secure user ID, not Android user ID */
+    uint64_t authenticator_id;    /* secure authenticator ID */
+    uint32_t authenticator_type;  /* hw_authenticator_type_t, in network order */
+    uint64_t timestamp;           /* in network order */
+    uint8_t hmac[32];
+} hw_auth_token_t;
 
-#endif  // ANDROID_OPTEE_TA_CA_DEFS_H
+typedef enum {
+    HW_AUTH_NONE = 0,
+    HW_AUTH_PASSWORD = 1 << 0,
+    HW_AUTH_FINGERPRINT = 1 << 1,
+    /* Additional entries should be powers of 2. */
+    HW_AUTH_ANY = -1,
+} hw_authenticator_type_t;
+
+#ifdef __cplusplus
+}  /* extern "C" */
+#endif  /* __cplusplus */
+
+#endif  /* ANDROID_OPTEE_TA_CA_DEFS_H */

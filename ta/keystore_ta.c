@@ -625,6 +625,7 @@ static keymaster_error_t TA_Attest_key(TEE_Param params[TEE_NUM_PARAMS])
 	keymaster_key_param_set_t attest_params = EMPTY_PARAM_SET;/* IN */
 	keymaster_cert_chain_t cert_chain = EMPTY_CERT_CHAIN;/* OUT */
 	keymaster_error_t res = KM_ERROR_OK;
+	keymaster_blob_t *challenge = NULL;
 
 	in = (uint8_t *) params[0].memref.buffer;
 	in_end = in + params[0].memref.size;
@@ -636,8 +637,19 @@ static keymaster_error_t TA_Attest_key(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_param_set(in, in_end, &attest_params, false, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	TA_add_origin(&attest_params, KM_ORIGIN_UNKNOWN, false);
 
+	for (size_t i = 0; i < attest_params.length; i++) {
+		if (attest_params.params[i].tag ==
+					KM_TAG_ATTESTATION_CHALLENGE) {
+			challenge = &attest_params.params[i].key_param.blob;
+			if (challenge->data_length >
+					MAX_ATTESTATION_CHALLENGE) {
+				EMSG("Challenge is too big");
+				res = KM_ERROR_INVALID_INPUT_LENGTH;
+				goto out;
+			}
+		}
+	}
 	/* TODO Attest key */
 
 	out += TA_serialize_cert_chain(out, &cert_chain, &res);

@@ -51,6 +51,7 @@ OpteeKeymasterDevice::OpteeKeymasterDevice(const hw_module_t* module)
 
     device_.configure = configure;
     device_.add_rng_entropy = add_rng_entropy;
+    device_.attest_key = attest_key;
     device_.generate_key = generate_key;
     device_.get_key_characteristics = get_key_characteristics;
     device_.import_key = import_key;

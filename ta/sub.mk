@@ -11,3 +11,5 @@ srcs-y += generator.c
 srcs-y += asn1.c
 srcs-y += crypto_aes.c
 srcs-y += crypto_rsa.c
+srcs-y += shift.c
+srcs-y += crypto_ec.c

@@ -28,6 +28,7 @@
 #define CMD_PARSE 0
 #define CMD_X509_ENCODE 1
 #define CMD_EC_SIGN_ENCODE 2
+#define CMD_EC_SIGN_DECODE 3
 
 keymaster_error_t TA_decode_pkcs8(const TEE_TASessionHandle sessionSTA,
 				keymaster_blob_t key_data,
@@ -39,6 +40,10 @@ keymaster_error_t TA_decode_pkcs8(const TEE_TASessionHandle sessionSTA,
 
 keymaster_error_t TA_encode_ec_sign(const TEE_TASessionHandle sessionSTA,
 				uint8_t *out, uint32_t *out_l);
+
+keymaster_error_t TA_decode_ec_sign(const TEE_TASessionHandle sessionSTA,
+				keymaster_blob_t *signature,
+				uint32_t key_size);
 
 keymaster_error_t TA_encode_key(const TEE_TASessionHandle sessionSTA,
 				keymaster_blob_t *export_data,

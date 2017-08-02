@@ -719,7 +719,7 @@ keymaster_error_t TA_create_operation(TEE_OperationHandle *operation,
 		case 384:
 			algo = TEE_ALG_ECDSA_P384;
 			break;
-		case 512:
+		case 521:
 			algo = TEE_ALG_ECDSA_P521;
 			break;
 		default:

@@ -32,6 +32,10 @@
 #include "asn1.h"
 #include "crypto_aes.h"
 #include "crypto_rsa.h"
+#include "crypto_ec.h"
+
+/* Max size of attestation challenge */
+#define MAX_ATTESTATION_CHALLENGE 128
 
 /* ASN.1 parser static TA */
 #define ASN1_PARSER_UUID \

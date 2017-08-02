@@ -931,26 +931,8 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 					input_provided, obj_h);
 		break;
 	case TEE_TYPE_ECDSA_KEYPAIR:
-		switch (operation.purpose) {
-		case KM_PURPOSE_VERIFY:
-		case KM_PURPOSE_SIGN:
-			if (*operation.digest_op != TEE_HANDLE_NULL) {
-				TEE_DigestUpdate(*operation.digest_op,
-					input.data, input.data_length);
-			} else {
-				/* if digest is not specified save all
-				 * blocks to use it in finish
-				 */
-				res = TA_store_sf_data(input,
-							&operation);
-			}
-			input_consumed = input_provided;
-			output.data_length = 0;
-			break;
-		default:
-			res = KM_ERROR_UNSUPPORTED_PURPOSE;
-			goto out;
-		}
+		res = TA_ec_update(&operation, &input, &output,
+					&input_consumed, input_provided);
 		break;
 	default:/* HMAC */
 		TEE_MACUpdate(*operation.operation,
@@ -968,7 +950,7 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 	out += TA_serialize_param_set(out, &out_params);
 	TA_update_operation(operation_handle, &operation);
 out:
-	if (input.data)
+	if (input.data && is_input_ext)
 		TEE_Free(input.data);
 	if (output.data)
 		TEE_Free(output.data);
@@ -996,14 +978,10 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 	keymaster_key_param_set_t out_params = EMPTY_PARAM_SET;/* OUT */
 	keymaster_blob_t output = EMPTY_BLOB;		/* OUT */
 	uint8_t *key_material = NULL;
-	uint8_t digest_out[KM_MAX_DIGEST_SIZE];
-	uint32_t digest_out_size = KM_MAX_DIGEST_SIZE;
 	uint32_t key_size = 0;
 	uint32_t type = 0;
 	uint32_t out_size = 0;
 	uint32_t tag_len = 0;
-	uint8_t *in_buf = NULL;
-	uint32_t in_buf_l = 0;
 	keymaster_error_t res = KM_ERROR_OK;
 	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;
 	keymaster_operation_t operation = EMPTY_OPERATION;
@@ -1063,58 +1041,9 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 				key_size, signature, obj_h, &is_input_ext);
 		break;
 	case TEE_TYPE_ECDSA_KEYPAIR:
-		/* If the data provided for unpadded signing or
-		 * verification is too long, truncate it.
-		 */
-		switch (operation.purpose) {
-		case KM_PURPOSE_VERIFY:
-		case KM_PURPOSE_SIGN:
-			if (*operation.digest_op != TEE_HANDLE_NULL) {
-				TEE_DigestDoFinal(*operation.digest_op,
-						input.data,
-						input.data_length,
-						digest_out,
-						&digest_out_size);
-				in_buf = digest_out;
-				in_buf_l = digest_out_size;
-			} else {
-				res = TA_append_sf_data(&input,
-							operation,
-							&output,
-							&out_size);
-				if (res != KM_ERROR_OK)
-					break;
-				in_buf = input.data;
-				in_buf_l = input.data_length;
-			}
-			if (operation.purpose == KM_PURPOSE_SIGN) {
-				res = TEE_AsymmetricSignDigest(
-						*operation.operation,
-						NULL, 0, in_buf,
-						in_buf_l,
-						output.data,
-						&out_size);
-				if (res == TEE_SUCCESS && out_size > 0) {
-					res = TA_encode_ec_sign(sessionSTA,
-							output.data, &out_size);
-					if (res != KM_ERROR_OK) {
-						EMSG("Failed to encode EC sign");
-						break;
-					}
-				}
-			} else {
-				res = TEE_AsymmetricVerifyDigest(
-						*operation.operation,
-						NULL, 0, in_buf,
-						in_buf_l,
-						signature.data,
-						signature.data_length);
-			}
-			break;
-		default:
-			res = KM_ERROR_UNSUPPORTED_PURPOSE;
-			goto out;
-		}
+		res = TA_ec_finish(&operation, &input, &output, &signature,
+					&out_size, key_size,
+					&sessionSTA, &is_input_ext);
 		break;
 	default: /* HMAC */
 		if (operation.purpose == KM_PURPOSE_SIGN) {
@@ -1141,7 +1070,7 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 	out += TA_serialize_blob(out, &output);
 out:
 	TA_abort_operation(operation_handle);
-	if (input.data)
+	if (input.data && is_input_ext)
 		TEE_Free(input.data);
 	if (output.data)
 		TEE_Free(output.data);

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_OPTEE_RSA_H
-#define ANDROID_OPTEE_RSA_H
+#ifndef ANDROID_OPTEE_CRYPTO_RSA_H
+#define ANDROID_OPTEE_CRYPTO_RSA_H
 
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>
@@ -26,14 +26,23 @@
 #include "operations.h"
 #include "generator.h"
 
-#define KM_MAX_DIGEST_SIZE 32
-#define KM_SALT_LENGTH 25
+#define KM_MAX_DIGEST_SIZE 64
 
 keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
-			       keymaster_blob_t *input,
-			       keymaster_blob_t *output, uint32_t *out_size,
-			       const uint32_t key_size,
-			       const keymaster_blob_t signature,
-			       const TEE_ObjectHandle obj_h);
+				keymaster_blob_t *input,
+				keymaster_blob_t *output, uint32_t *out_size,
+				const uint32_t key_size,
+				const keymaster_blob_t signature,
+				const TEE_ObjectHandle obj_h,
+				bool *is_input_ext);
 
-#endif/*ANDROID_OPTEE_RSA_H*/
+keymaster_error_t TA_rsa_update(keymaster_operation_t *operation,
+				const keymaster_blob_t *input,
+				keymaster_blob_t *output,
+				uint32_t *out_size,
+				const uint32_t key_size,
+				size_t *input_consumed,
+				const uint32_t input_provided,
+				const TEE_ObjectHandle obj_h);
+
+#endif/*ANDROID_OPTEE_CRYPTO_RSA_H*/

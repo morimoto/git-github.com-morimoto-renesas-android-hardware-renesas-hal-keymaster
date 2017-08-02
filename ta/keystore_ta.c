@@ -926,66 +926,9 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 					&in_params, &is_input_ext);
 		break;
 	case TEE_TYPE_RSA_KEYPAIR:
-		if (input.data_length * 8 > key_size) {
-			EMSG("Input exeeds RSA key size");
-			res = KM_ERROR_INVALID_INPUT_LENGTH;
-			goto out;
-		}
-		switch (operation.purpose) {
-		case KM_PURPOSE_ENCRYPT:
-		case KM_PURPOSE_DECRYPT:
-			if (operation.padding != KM_PAD_RSA_PSS &&
-					operation.padding !=
-					KM_PAD_RSA_OAEP) {
-				if (operation.purpose ==
-						KM_PURPOSE_DECRYPT) {
-					res = TEE_AsymmetricDecrypt(
-						*operation.operation,
-						NULL, 0, input.data,
-						input.data_length,
-						output.data,
-						&out_size);
-					if (operation.padding ==
-							KM_PAD_NONE &&
-							out_size < key_size / 8)
-						res = TA_do_rsa_pad(
-								&output.data,
-								&out_size,
-								key_size,
-								NULL,
-								0);
-				} else {
-					res = TEE_AsymmetricEncrypt(
-						*operation.operation,
-						NULL, 0, input.data,
-						input.data_length,
-						output.data,
-						&out_size);
-				}
-				input_consumed = input_provided;
-				output.data_length = out_size;
-				break;
-			}
-		case KM_PURPOSE_VERIFY:
-		case KM_PURPOSE_SIGN:
-			if (*operation.digest_op != TEE_HANDLE_NULL) {
-				TEE_DigestUpdate(*operation.digest_op,
-						input.data,
-						input.data_length);
-			} else {
-				/* if digest is not specified save all
-				 * blocks to use it in finish
-				 */
-				res = TA_store_sf_data(input,
-							&operation);
-			}
-			input_consumed = input_provided;
-			output.data_length = 0;
-			break;
-		default:
-			res = KM_ERROR_UNSUPPORTED_PURPOSE;
-			goto out;
-		}
+		res = TA_rsa_update(&operation, &input, &output, &out_size,
+					key_size, &input_consumed,
+					input_provided, obj_h);
 		break;
 	case TEE_TYPE_ECDSA_KEYPAIR:
 		switch (operation.purpose) {
@@ -1116,9 +1059,8 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 					tag_len, &is_input_ext);
 		break;
 	case TEE_TYPE_RSA_KEYPAIR:
-		res = TA_rsa_finish(&operation, &input,
-					&output, &out_size, key_size,
-					signature, obj_h);
+		res = TA_rsa_finish(&operation, &input, &output, &out_size,
+				key_size, signature, obj_h, &is_input_ext);
 		break;
 	case TEE_TYPE_ECDSA_KEYPAIR:
 		/* If the data provided for unpadded signing or

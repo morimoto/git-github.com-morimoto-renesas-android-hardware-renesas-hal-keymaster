@@ -259,7 +259,7 @@ keymaster_error_t TA_update_operation(keymaster_operation_handle_t op_handle,
 	return res;
 }
 
-keymaster_error_t TA_store_sf_data(const keymaster_blob_t input,
+keymaster_error_t TA_store_sf_data(const keymaster_blob_t *input,
 					keymaster_operation_t *operation)
 {
 	keymaster_blob_list_item_t *new;
@@ -272,7 +272,7 @@ keymaster_error_t TA_store_sf_data(const keymaster_blob_t input,
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
 	}
 	new->next = NULL;
-	new->data.data_length = input.data_length;
+	new->data.data_length = input->data_length;
 	/* freed when operation is aborted (TA_abort_operation) */
 	new->data.data = TEE_Malloc(new->data.data_length,
 						TEE_MALLOC_FILL_ZERO);
@@ -280,7 +280,7 @@ keymaster_error_t TA_store_sf_data(const keymaster_blob_t input,
 		EMSG("Failed to allocate memory for buffered sign/veify data");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
 	}
-	TEE_MemMove(new->data.data, input.data, input.data_length);
+	TEE_MemMove(new->data.data, input->data, input->data_length);
 	if (current == NULL) {
 		operation->sf_item = new;
 	} else {
@@ -296,47 +296,39 @@ keymaster_error_t TA_store_sf_data(const keymaster_blob_t input,
 }
 
 keymaster_error_t TA_append_sf_data(keymaster_blob_t *input,
-				const keymaster_operation_t operation,
-				keymaster_blob_t *output, uint32_t *out_size)
+				const keymaster_operation_t *operation,
+				bool *is_input_ext)
 {
 	uint32_t size = 0;
 	uint32_t padding = 0;
-	uint8_t *buffer;
-	keymaster_blob_list_item_t *current = operation.sf_item;
+	uint8_t *ptr = NULL;
+	keymaster_blob_list_item_t *current = operation->sf_item;
 
-	if (operation.sf_item == NULL)
+	if (operation->sf_item == NULL)
 		return KM_ERROR_OK;
 	while (current != NULL) {
 		size += current->data.data_length;
 		current = current->next;
 	}
 	/* Freed before input blob is destroyed */
-	buffer = TEE_Malloc(size + input->data_length, TEE_MALLOC_FILL_ZERO);
-	if (!buffer) {
+	ptr = TEE_Malloc(size + input->data_length, TEE_MALLOC_FILL_ZERO);
+	if (!ptr) {
 		EMSG("Failed to allocate memory on saved blocks append");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
 	}
 
-	current = operation.sf_item;
+	current = operation->sf_item;
 	while (current != NULL) {
-		TEE_MemMove(buffer + padding, current->data.data,
+		TEE_MemMove(ptr + padding, current->data.data,
 						current->data.data_length);
-		padding = current->data.data_length;
+		padding += current->data.data_length;
 		current = current->next;
 	}
-	TEE_MemMove(buffer + padding, input->data, input->data_length);
+	TEE_MemMove(ptr + padding, input->data, input->data_length);
 	TEE_Free(input->data);
-	input->data = buffer;
+	input->data = ptr;
 	input->data_length = size + input->data_length;
-	TEE_Free(output->data);
-	output->data_length = *out_size + 2 * input->data_length;
-	/* Freed before output blob is destroyed */
-	output->data = TEE_Malloc(output->data_length, TEE_MALLOC_FILL_ZERO);
-	if (!output->data) {
-		EMSG("Failed to allocate memory for new output");
-		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
-	}
-	*out_size = output->data_length;
+	*is_input_ext = true;
 	return KM_ERROR_OK;
 }
 

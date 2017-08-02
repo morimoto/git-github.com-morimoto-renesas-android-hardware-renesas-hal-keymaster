@@ -93,12 +93,12 @@ keymaster_error_t TA_kill_old_operation(void);
 keymaster_error_t TA_abort_operation(
 	const keymaster_operation_handle_t op_handle);
 
-keymaster_error_t TA_store_sf_data(const keymaster_blob_t input,
+keymaster_error_t TA_store_sf_data(const keymaster_blob_t *input,
 				keymaster_operation_t *operation);
 
 keymaster_error_t TA_append_sf_data(keymaster_blob_t *input,
-				const keymaster_operation_t operation,
-				keymaster_blob_t *output, uint32_t *out_size);
+				const keymaster_operation_t *operation,
+				bool *is_input_ext);
 
 void TA_add_to_nonce(keymaster_operation_t *operation, const uint64_t value);
 

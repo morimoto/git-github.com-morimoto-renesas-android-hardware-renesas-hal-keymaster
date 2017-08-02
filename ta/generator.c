@@ -645,24 +645,41 @@ keymaster_error_t TA_create_operation(TEE_OperationHandle *operation,
 			case KM_DIGEST_SHA_2_512:
 				algo = TEE_ALG_RSASSA_PKCS1_V1_5_SHA512;
 				break;
+			case KM_DIGEST_NONE:
+				algo = TEE_ALG_RSASSA_PKCS1_V1_5;
+				break;
 			default:
 				EMSG("Unsupported by RSA PKCS digest");
 				return KM_ERROR_UNSUPPORTED_DIGEST;
 			}
 			break;
 		case KM_PAD_RSA_PSS:
-			/* The digest specified with KM_TAG_DIGEST
-			 * in input_params on begin is used as
-			 * the PSS digest algorithm, and SHA1 is
-			 * used as the MGF1 digest algorithm
-			 */
-			algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA1;
+			switch (digest) {
+			case KM_DIGEST_SHA1:
+				algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA1;
+				break;
+			case KM_DIGEST_SHA_2_224:
+				algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA224;
+				break;
+			case KM_DIGEST_SHA_2_256:
+				algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA256;
+				break;
+			case KM_DIGEST_SHA_2_384:
+				algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA384;
+				break;
+			case KM_DIGEST_SHA_2_512:
+				algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA512;
+				break;
+			default:
+				EMSG("Unsupported by RSA PSS digest");
+				return KM_ERROR_UNSUPPORTED_DIGEST;
+			}
 			break;
 		case KM_PAD_RSA_PKCS1_1_5_ENCRYPT:
 			/* digest is not required */
 			algo = TEE_ALG_RSAES_PKCS1_V1_5;
 			break;
-			case KM_PAD_RSA_OAEP:
+		case KM_PAD_RSA_OAEP:
 			switch (digest) {
 			case KM_DIGEST_SHA1:
 				algo = TEE_ALG_RSAES_PKCS1_OAEP_MGF1_SHA1;
@@ -685,13 +702,6 @@ keymaster_error_t TA_create_operation(TEE_OperationHandle *operation,
 			}
 			break;
 		default:/* KM_PAD_NONE */
-			if (purpose == KM_PURPOSE_SIGN ||
-				purpose == KM_PURPOSE_VERIFY) {
-				/* TODO check */
-				EMSG("RSA with KM_PAD_NONE for SIGN and VERIFY can be not supported by trusted OS");
-				res = KM_ERROR_INCOMPATIBLE_PURPOSE;
-				goto out_co;
-			}
 			algo = TEE_ALG_RSA_NOPAD;
 		}
 		break;

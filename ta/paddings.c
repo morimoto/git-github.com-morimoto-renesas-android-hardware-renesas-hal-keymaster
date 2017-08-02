@@ -127,8 +127,7 @@ keymaster_error_t TA_remove_pkcs7_pad(keymaster_blob_t *output,
 }
 
 keymaster_error_t TA_do_rsa_pad(uint8_t **input, uint32_t *input_l,
-				const uint32_t key_size,
-				keymaster_blob_t *output, uint32_t *out_size)
+				const uint32_t key_size)
 {
 	uint8_t *buf;
 	uint32_t key_size_bytes = key_size / 8;
@@ -136,24 +135,12 @@ keymaster_error_t TA_do_rsa_pad(uint8_t **input, uint32_t *input_l,
 	/* Freed before input blob is destroyed by caller */
 	buf = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
 	if (!buf) {
-		EMSG("Failed to allocate memory for buffer on adding RSA padding");
+		EMSG("Failed to allocate memory for padded RSA input");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
 	}
-	TEE_MemMove(buf + key_size_bytes - *input_l,
-				*input, *input_l);
+	TEE_MemMove(buf + key_size_bytes - *input_l, *input, *input_l);
 	TEE_Free(*input);
 	*input = buf;
 	*input_l = key_size_bytes;
-	if (output == NULL)
-		return KM_ERROR_OK;
-	TEE_Free(output->data);
-	output->data_length = 2 * *input_l;
-	/* Freed before output blob is destroyed by caller */
-	output->data = TEE_Malloc(output->data_length, TEE_MALLOC_FILL_ZERO);
-	if (!output->data) {
-		EMSG("Failed to allocate memory for ne RSA output");
-		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
-	}
-	*out_size = (uint32_t) output->data_length;
 	return KM_ERROR_OK;
 }

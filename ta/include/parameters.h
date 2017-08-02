@@ -32,7 +32,7 @@
 #define MIN_MML_HMAC 64
 #define MAX_KEY_HMAC 1024
 #define MIN_KEY_HMAC 64
-#define MAX_KEY_RSA (2 * 1024)
+#define MAX_KEY_RSA (4 * 1024)
 
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>

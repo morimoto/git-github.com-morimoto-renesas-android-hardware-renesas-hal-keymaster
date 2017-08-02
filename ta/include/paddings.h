@@ -41,8 +41,6 @@ keymaster_error_t TA_remove_pkcs7_pad(keymaster_blob_t *output,
 bool TA_check_pkcs7_pad(keymaster_blob_t *output, const bool aligned);
 
 keymaster_error_t TA_do_rsa_pad(uint8_t **input, uint32_t *input_l,
-				const uint32_t key_size,
-				keymaster_blob_t *output,
-				uint32_t *out_size);
+				const uint32_t key_size);
 
 #endif/* ANDROID_OPTEE_PADDINGS_H */

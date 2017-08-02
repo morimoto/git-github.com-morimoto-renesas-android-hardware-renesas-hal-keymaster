@@ -18,10 +18,11 @@
 #include "parsel.h"
 
 /* Deserializers */
-int TA_deserialize_blob(const uint8_t *in, const uint8_t *end,
+int TA_deserialize_blob(uint8_t *in, const uint8_t *end,
 			keymaster_blob_t *blob,
 			const bool check_presence,
-			keymaster_error_t *res)
+			keymaster_error_t *res,
+			bool is_input)
 {
 	uint8_t *data;
 	const uint8_t *start = in;
@@ -51,20 +52,25 @@ int TA_deserialize_blob(const uint8_t *in, const uint8_t *end,
 		*res = KM_ERROR_INSUFFICIENT_BUFFER_SPACE;
 		return in - start;
 	}
-	/* Freed when deserialized blob is destroyed by caller */
-	data = TEE_Malloc(blob->data_length, TEE_MALLOC_FILL_ZERO);
-	if (!data) {
-		EMSG("Failed to allocate memory for blob");
-		*res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-		return in - start;
+	if (!is_input) {
+		/* Freed when deserialized blob is destroyed by caller */
+		data = TEE_Malloc(blob->data_length, TEE_MALLOC_FILL_ZERO);
+		if (!data) {
+			EMSG("Failed to allocate memory for blob");
+			*res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			return in - start;
+		}
+		TEE_MemMove(data, in, blob->data_length);
+		in += blob->data_length;
+		blob->data = data;
+	} else {
+		/* Not allocate memory, it can be too large */
+		blob->data = in;
 	}
-	TEE_MemMove(data, in, blob->data_length);
-	in += blob->data_length;
-	blob->data = data;
 	return in - start;
 }
 
-int TA_deserialize_param_set(const uint8_t *in, const uint8_t *end,
+int TA_deserialize_param_set(uint8_t *in, const uint8_t *end,
 			keymaster_key_param_set_t *params,
 			const bool check_presence, keymaster_error_t *res)
 {
@@ -117,7 +123,7 @@ int TA_deserialize_param_set(const uint8_t *in, const uint8_t *end,
 				params->params[i].tag) == KM_BYTES) {
 			in += TA_deserialize_blob(in, end,
 				&(params->params[i].key_param.blob),
-				false, res);
+				false, res, false);
 			if (*res != KM_ERROR_OK)
 				return in - start;
 	}

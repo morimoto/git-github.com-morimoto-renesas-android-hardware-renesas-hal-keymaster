@@ -51,11 +51,12 @@ int TA_serialize_param_set(uint8_t *out,
 			const keymaster_key_param_set_t *params);
 
 /* Deseriazers */
-int TA_deserialize_blob(const uint8_t *in, const uint8_t *end,
+int TA_deserialize_blob(uint8_t *in, const uint8_t *end,
 			keymaster_blob_t *blob_t,
-			const bool check_presence, keymaster_error_t *res);
+			const bool check_presence, keymaster_error_t *res,
+			bool is_input);
 
-int TA_deserialize_param_set(const uint8_t *in, const uint8_t *end,
+int TA_deserialize_param_set(uint8_t *in, const uint8_t *end,
 			keymaster_key_param_set_t *params_t,
 			const bool check_presence, keymaster_error_t *res);
 

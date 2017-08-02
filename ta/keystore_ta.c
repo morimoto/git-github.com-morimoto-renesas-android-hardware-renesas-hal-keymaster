@@ -353,10 +353,10 @@ static keymaster_error_t TA_Get_key_characteristics(
 	in += TA_deserialize_key_blob(in, in_end, &key_blob, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &client_id, true, &res);
+	in += TA_deserialize_blob(in, in_end, &client_id, true, &res, false);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &app_data, true, &res);
+	in += TA_deserialize_blob(in, in_end, &app_data, true, &res, false);
 	if (res != KM_ERROR_OK)
 		goto out;
 	if (key_blob.key_material_size == 0) {
@@ -435,7 +435,7 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_key_format(in, in_end, &key_format, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &key_data, false, &res);
+	in += TA_deserialize_blob(in, in_end, &key_data, false, &res, false);
 	if (res != KM_ERROR_OK)
 		goto out;
 
@@ -592,10 +592,10 @@ static keymaster_error_t TA_Export_key(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_key_blob(in, in_end, &key_to_export, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &client_id, true, &res);
+	in += TA_deserialize_blob(in, in_end, &client_id, true, &res, false);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &app_data, true, &res);
+	in += TA_deserialize_blob(in, in_end, &app_data, true, &res, false);
 	if (res != KM_ERROR_OK)
 		goto out;
 
@@ -919,7 +919,7 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_param_set(in, in_end, &in_params, true, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &input, false, &res);
+	in += TA_deserialize_blob(in, in_end, &input, false, &res, true);
 	if (res != KM_ERROR_OK)
 		goto out;
 
@@ -1255,10 +1255,10 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_param_set(in, in_end, &in_params, true, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &input, true, &res);
+	in += TA_deserialize_blob(in, in_end, &input, true, &res, true);
 	if (res != KM_ERROR_OK)
 		goto out;
-	in += TA_deserialize_blob(in, in_end, &signature, true, &res);
+	in += TA_deserialize_blob(in, in_end, &signature, true, &res, false);
 	if (res != KM_ERROR_OK)
 		goto out;
 

@@ -15,15 +15,17 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_GENERATOR_H
-#define ANDROID_GENERATOR_H
+#ifndef ANDROID_OPTEE_GENERATOR_H
+#define ANDROID_OPTEE_GENERATOR_H
 
 #define KM_ATTR_COUNT_AES_HMAC 1
 #define KM_ATTR_COUNT_RSA 8
 #define KM_ATTR_COUNT_EC 4
-#define KM_NORMAL_ATTR_SIZE 32
+#define KM_AES_ATTR_SIZE 32
+#define KM_HMAC_ATTR_SIZE 128
 #define KM_RSA_ATTR_SIZE 512
 #define KM_EC_ATTR_SIZE 256
+#define KM_MAX_ATTR_SIZE 512
 #define MAX_HMAC_MD5 512
 #define MIN_HMAC_MD5 64
 #define MAX_HMAC_SHA1 512
@@ -101,4 +103,4 @@ uint32_t *TA_get_attrs_list(const keymaster_algorithm_t algorithm);
 
 uint32_t TA_get_curve_nist(const uint32_t key_size);
 
-#endif/* ANDROID_GENERATOR_H */
+#endif/* ANDROID_OPTEE_GENERATOR_H */

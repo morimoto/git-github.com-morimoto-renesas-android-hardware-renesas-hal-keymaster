@@ -59,12 +59,16 @@ uint32_t TA_get_key_size(const keymaster_algorithm_t algorithm)
 {
 	switch (algorithm) {
 	case KM_ALGORITHM_AES:
-	case KM_ALGORITHM_HMAC:
 		/* attr_count * (size of tag + size of attribute +
 		 * attribute data size) + size of algorithm + size of key size
 		 */
 		return KM_ATTR_COUNT_AES_HMAC *
-			(2 * sizeof(uint32_t) + KM_NORMAL_ATTR_SIZE)
+			(2 * sizeof(uint32_t) + KM_AES_ATTR_SIZE)
+			+ sizeof(algorithm) + sizeof(uint32_t);
+	case KM_ALGORITHM_HMAC:
+		/* Maximal HMAC key size 128 bytes */
+		return KM_ATTR_COUNT_AES_HMAC *
+			(2 * sizeof(uint32_t) + KM_HMAC_ATTR_SIZE)
 			+ sizeof(algorithm) + sizeof(uint32_t);
 	case KM_ALGORITHM_RSA:
 		/* RSA  attributes for key size 2048 bits has size 256 bytes */
@@ -286,7 +290,7 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 	uint32_t a;
 	uint32_t b;
 	uint32_t curve;
-	uint8_t buffer[KM_RSA_ATTR_SIZE];
+	uint8_t buffer[KM_MAX_ATTR_SIZE];
 	uint8_t *buf_pe = NULL;
 	uint64_t be_pe;
 	TEE_Attribute *attrs_in = NULL;
@@ -375,6 +379,9 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 	if (res != TEE_SUCCESS) {
 		EMSG("Failed to generate key via TEE_GenerateKey res = %x",
 									res);
+		/* Convert error code to Android style */
+		if (res == TEE_ERROR_NOT_SUPPORTED)
+			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
 		goto gk_out;
 	}
 
@@ -383,9 +390,7 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 	TEE_MemMove(key_material + padding, &key_size, sizeof(key_size));
 	padding += sizeof(key_size);
 	for (uint32_t i = 0; i < attr_count; i++) {
-		attr_size = KM_NORMAL_ATTR_SIZE;
-		if (algorithm == KM_ALGORITHM_RSA)
-			attr_size = KM_RSA_ATTR_SIZE;
+		attr_size = KM_MAX_ATTR_SIZE;
 		TEE_MemMove(key_material + padding, attributes + i,
 						sizeof(attributes[i]));
 		padding += sizeof(attributes[i]);
@@ -799,8 +804,8 @@ out_co:
 keymaster_error_t TA_create_digest_op(TEE_OperationHandle *digest_op,
 					const keymaster_digest_t digest)
 {
-	keymaster_error_t res = KM_ERROR_OK;
 	uint32_t algo;
+	uint32_t res = TEE_SUCCESS;
 
 	switch (digest) {
 	case KM_DIGEST_MD5:
@@ -825,14 +830,12 @@ keymaster_error_t TA_create_digest_op(TEE_OperationHandle *digest_op,
 		return res;
 	default:
 		EMSG("Unsupported digest");
-		res = KM_ERROR_UNSUPPORTED_DIGEST;
-		goto out_cdo;
+		return KM_ERROR_UNSUPPORTED_DIGEST;
 	}
 	res = TEE_AllocateOperation(digest_op, algo, TEE_MODE_DIGEST, 0);
 	if (res != TEE_SUCCESS) {
-		EMSG("Error TEE_AllocateOperation");
-		goto out_cdo;
+		EMSG("Error on TEE_AllocateOperation (%x)", res);
+		return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
 	}
-out_cdo:
-	return res;
+	return KM_ERROR_OK;
 }

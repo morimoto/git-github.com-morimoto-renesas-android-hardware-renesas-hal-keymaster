@@ -53,11 +53,13 @@ keymaster_error_t TA_do_auth(const keymaster_key_param_set_t in_params,
 			break;
 		switch (in_params.params[i].tag) {
 		case KM_TAG_AUTH_TOKEN:
-			found_token = true;
-			TEE_MemMove(&auth_token,
-				in_params.params[i].key_param.blob.data,
-				in_params.params[i].
-						key_param.blob.data_length);
+			if (in_params.params[i].key_param.blob.data_length >=
+							sizeof(auth_token)) {
+				found_token = true;
+				TEE_MemMove(&auth_token,
+					in_params.params[i].key_param.blob.data,
+					sizeof(auth_token));
+			}
 			break;
 		default:
 			break;

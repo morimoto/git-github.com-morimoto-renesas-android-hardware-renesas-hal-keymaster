@@ -1053,11 +1053,14 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 						output.data,
 						&out_size);
 		} else {/* KM_PURPOSE_VERIFY */
-			TEE_MACCompareFinal(*operation.operation,
+			res = TEE_MACCompareFinal(*operation.operation,
 						input.data,
 						input.data_length,
 						signature.data,
 						signature.data_length);
+			/* Convert error code to Android style */
+			if (res == (int) TEE_ERROR_MAC_INVALID)
+				res = KM_ERROR_VERIFICATION_FAILED;
 		}
 	}
 	if (res != TEE_SUCCESS) {

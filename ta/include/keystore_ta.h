@@ -95,26 +95,13 @@ uint64_t identifier_ec[] = {1, 2, 840, 10045, 2, 1};
  *        XYValue BIT_STRING } }
  */
 
-static bool TA_is_stream_cipher(keymaster_block_mode_t mode)
-{
-	switch (mode) {
-	case KM_MODE_CBC:
-	case KM_MODE_ECB:
-		return false;
-	default:/*KM_MODE_GCM, KM_MODE_CTR*/
-		return true;
-	}
-}
-
-static keymaster_error_t TA_append_input(keymaster_blob_t *input,
-			keymaster_operation_t *operation,
-			const uint32_t to_copy);
+static uint32_t TA_possibe_size(const uint32_t type,
+				const uint32_t key_size,
+				const keymaster_blob_t input,
+				const uint32_t tag_len);
 
 static keymaster_error_t check_patch_and_ver(const uint32_t patch,
 			const uint32_t ver);
-
-static keymaster_error_t TA_save_gcm_tag(keymaster_blob_t *input,
-				keymaster_operation_t *operation);
 
 static keymaster_error_t TA_Configure(TEE_Param params[TEE_NUM_PARAMS]);
 

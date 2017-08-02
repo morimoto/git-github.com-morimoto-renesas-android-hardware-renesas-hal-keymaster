@@ -26,15 +26,17 @@
 
 #include "ta_ca_defs.h"
 
-typedef enum {
-	KM_ADD = 1,
-	KM_REMOVE = 2,
-} keymaster_action_t;
+keymaster_error_t TA_check_out_size(const uint32_t input_l,
+					keymaster_blob_t *output,
+					uint32_t *out_size,
+					uint32_t tag_len);
 
-keymaster_error_t TA_do_pkcs7_pad(keymaster_blob_t *blob,
-				const keymaster_action_t action,
-				keymaster_blob_t *output,
-				uint32_t *out_size, const bool force);
+keymaster_error_t TA_add_pkcs7_pad(keymaster_blob_t *input,
+				const bool force, keymaster_blob_t *output,
+				uint32_t *out_size, bool *is_input_ext);
+
+keymaster_error_t TA_remove_pkcs7_pad(keymaster_blob_t *output,
+					uint32_t *out_size);
 
 bool TA_check_pkcs7_pad(keymaster_blob_t *output, const bool aligned);
 

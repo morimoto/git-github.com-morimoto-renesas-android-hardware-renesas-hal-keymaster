@@ -72,59 +72,30 @@ void TA_CloseSessionEntryPoint(void *sess_ctx __unused)
 	TEE_CloseTASession(session_rngSTA);
 }
 
-static keymaster_error_t TA_append_input(keymaster_blob_t *input,
-			keymaster_operation_t *operation,
-			const uint32_t to_copy)
+static uint32_t TA_possibe_size(const uint32_t type, const uint32_t key_size,
+				const keymaster_blob_t input,
+				const uint32_t tag_len)
 {
-	keymaster_error_t res = KM_ERROR_OK;
-	uint8_t *data = NULL;
-	uint32_t tag_length = operation->mac_length / 8;
-	uint32_t push_to_input = operation->a_data_length
-					+ to_copy - tag_length;
-
-	data = TEE_Malloc(input->data_length + push_to_input,
-							TEE_MALLOC_FILL_ZERO);
-	if (!data) {
-		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-		EMSG("Failed to allocate memory for input appended by TAG");
-		goto out;
+	switch (type) {
+	case TEE_TYPE_AES:
+		/*
+		 * Input can be extended to block size and one block
+		 * can be added as a padding.
+		 * Additionaly GCM tag can be added
+		 */
+		return ((input.data_length + BLOCK_SIZE - 1)
+				/ BLOCK_SIZE + 1) * BLOCK_SIZE + tag_len;
+	case TEE_TYPE_RSA_KEYPAIR:
+		return (key_size + 7) / 8;
+	case TEE_TYPE_ECDSA_KEYPAIR:
+		/*
+		 * Output is a sign with r and s parameters each sized as
+		 * a key in ASN.1 format
+		 */
+		return 3 * key_size;
+	default:/* HMAC */
+		return KM_MAX_DIGEST_SIZE;
 	}
-	TEE_MemMove(data, operation->a_data, push_to_input);
-	TEE_MemMove(data + push_to_input, input->data, input->data_length);
-	TEE_Free(input->data);
-	input->data = data;
-	input->data_length += push_to_input;
-	operation->a_data_length -= push_to_input;
-	TEE_MemMove(operation->a_data, operation->a_data + 1,
-					operation->a_data_length);
-out:
-	return res;
-}
-
-static keymaster_error_t TA_save_gcm_tag(keymaster_blob_t *input,
-				keymaster_operation_t *operation)
-{
-	keymaster_error_t res = KM_ERROR_OK;
-	uint32_t tag_size = operation->mac_length / 8;
-	uint32_t to_copy = tag_size;
-
-	if (input->data_length == 0)
-		return res;
-	if (input->data_length < tag_size)
-		to_copy = input->data_length;
-	if (operation->a_data_length + to_copy > tag_size) {
-		res = TA_append_input(input, operation, to_copy);
-		if (res != KM_ERROR_OK)
-			return res;
-	}
-
-	TEE_MemMove(operation->a_data + operation->a_data_length,
-			input->data + (input->data_length - to_copy), to_copy);
-	input->data_length -= to_copy;
-	operation->a_data_length += to_copy;
-	DMSG("Tag has been stored with size %u",
-				operation->a_data_length);
-	return res;
 }
 
 static keymaster_error_t check_patch_and_ver(const uint32_t patch,
@@ -899,15 +870,13 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 	uint8_t *key_material = NULL;
 	uint32_t key_size = 0;
 	uint32_t type = 0;
-	uint32_t pos = 0U;
-	uint32_t remainder = 0;
 	uint32_t out_size = 0;
 	uint32_t input_provided = 0;
-	uint32_t in_size = BLOCK_SIZE;
 	keymaster_error_t res = KM_ERROR_OK;
 	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;
 	keymaster_operation_t operation = EMPTY_OPERATION;
 	TEE_ObjectHandle obj_h = TEE_HANDLE_NULL;
+	bool is_input_ext = false;
 
 	in = (uint8_t *) params[0].memref.buffer;
 	in_end = in + params[0].memref.size;
@@ -940,54 +909,10 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 			goto out;
 		}
 	}
-	/* check presence of associated data for AES keys */
-	if (type == TEE_TYPE_AES && operation.mode == KM_MODE_GCM) {
-		for (uint32_t i = 0; i < in_params.length; i++) {
-			if (in_params.params[i].tag == KM_TAG_ASSOCIATED_DATA) {
-				if (operation.got_input) {
-					EMSG("KM_TAG_ASSOCIATED_DATA is found when input data has been received already");
-					res = KM_ERROR_INVALID_TAG;
-					goto out;
-				}
-				TEE_AEUpdateAAD(*operation.operation,
-					in_params.params[i].key_param.blob.data,
-					in_params.params[i].key_param.
-							blob.data_length);
-				break;
-			}
-		}
-		/* During AES GCM decryption, the lastKM_TAG_MAC_LENGTH bytes
-		 * of the data provided to the last update call is the tag
-		 */
-		if (operation.mac_length != UNDEFINED &&
-				operation.purpose == KM_PURPOSE_DECRYPT &&
-				input.data_length > 0) {
-			if (operation.a_data == NULL) {
-				/* Freed when operation is
-				 * aborted (TA_abort_operation)
-				 */
-				operation.a_data =
-					TEE_Malloc(operation.mac_length / 8,
-							TEE_MALLOC_FILL_ZERO);
-				if (!operation.a_data) {
-					res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-					EMSG("Failed to allocate memory for authentication tag");
-					goto out;
-				}
-			}
-			/* Since a given invocation of update cannot know if
-			 * it's the last invocation, it must process all but
-			 * the tag length and buffer the possible tag data
-			 * for processing during finish.
-			 */
-			TA_save_gcm_tag(&input, &operation);
-		}
-	}
 
 	if (input.data_length != 0)
 		operation.got_input = true;
-	/* make out buffer at least twice bigger than input */
-	out_size = 2 * input.data_length + BLOCK_SIZE + key_size;
+	out_size = TA_possibe_size(type, key_size, input, 0);
 	output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
 	if (!output.data) {
 		EMSG("Failed to allocate memory for output");
@@ -996,114 +921,9 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 	}
 	switch (type) {
 	case TEE_TYPE_AES:
-		/* KM_MODE_CBC, KM_MODE_ECB */
-		if (!TA_is_stream_cipher(operation.mode)) {
-			if (operation.padding == KM_PAD_PKCS7) {
-				if (operation.prev_in_size ==
-						input.data_length) {
-					DMSG("End of data reached");
-					operation.buffering = false;
-				} else {
-					DMSG("Buffering ON");
-					operation.buffering = true;
-				}
-				if (operation.prev_in_size == UNDEFINED
-						&& input.data_length ==
-						BLOCK_SIZE) {
-					operation.prev_in_size =
-						input.data_length;
-					break;
-				}
-				operation.prev_in_size =
-						input.data_length;
-				if (operation.buffering && (
-						(input.data_length <=
-						BLOCK_SIZE &&
-						operation.purpose ==
-						KM_PURPOSE_DECRYPT) ||
-						(input.data_length <
-						BLOCK_SIZE &&
-						operation.purpose ==
-						KM_PURPOSE_ENCRYPT))) {
-					DMSG("Input data is too small. Buffering");
-					/* Buffering if data
-					 * transferred by chunks
-					 */
-					break;
-				}
-				DMSG("Some blocks can be processed");
-			} else {/* KM_PAD_NONE */
-				if (input.data_length < BLOCK_SIZE)
-					break;
-			}
-		}
-
-		/* only KM_MODE_CBC and KM_MODE_ECB */
-		if (operation.padding == KM_PAD_PKCS7 &&
-				operation.purpose == KM_PURPOSE_ENCRYPT
-				&& !operation.buffering) {
-			DMSG("Adding padding before encryption");
-			res = TA_do_pkcs7_pad(&input, KM_ADD,
-						&output, &out_size, false);
-			if (res != KM_ERROR_OK)
-				goto out;
-			operation.padded = true;
-		}
-		remainder = input.data_length;
-		if (operation.mode == KM_MODE_GCM) {
-			res = TEE_AEUpdate(
-					*operation.operation,
-					input.data,
-					input.data_length,
-					output.data,
-					&out_size);
-			output.data_length += out_size;
-			input_consumed = input_provided;
-		} else {
-			if (operation.mode == KM_MODE_CTR)
-				/* CTR is a stream mode */
-				in_size = input.data_length;
-			while (operation.mode == KM_MODE_CTR
-				   || remainder / BLOCK_SIZE != 0) {
-				/* calculate memory left */
-				out_size = 2 * input.data_length -
-							output.data_length;
-				res = TEE_CipherUpdate(
-						*operation.operation,
-						&input.data[pos],
-						in_size,
-						&output.data[pos],
-						&out_size);
-				if (res != TEE_SUCCESS) {
-					EMSG("Error TEE_CipherUpdate res = %x",
-									res);
-					goto out;
-				}
-				output.data_length += out_size;
-				pos += in_size;
-				input_consumed += in_size;
-				operation.prev_in_size -= in_size;
-				remainder -= in_size;
-				if (remainder < BLOCK_SIZE ||
-						(remainder == BLOCK_SIZE &&
-						operation.buffering))
-					break;
-			}
-		}
-		if (input_consumed > input_provided)
-			input_consumed = input_provided;
-		if (res == KM_ERROR_OK &&
-				operation.padding == KM_PAD_PKCS7 &&
-				operation.purpose == KM_PURPOSE_DECRYPT
-				&& ((input_consumed == input_provided
-				&& !operation.buffering) ||
-				TA_check_pkcs7_pad(&output, true))) {
-			DMSG("Removing padding on decrypt");
-			res = TA_do_pkcs7_pad(&input, KM_REMOVE,
-						&output, &out_size, false);
-			if (res == KM_ERROR_OK)
-				operation.padded = true;
-		}
+		res = TA_aes_update(&operation, &input, &output, &out_size,
+					input_provided, &input_consumed,
+					&in_params, &is_input_ext);
 		break;
 	case TEE_TYPE_RSA_KEYPAIR:
 		if (input.data_length * 8 > key_size) {
@@ -1194,10 +1014,11 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 			input.data, input.data_length);
 		input_consumed = input_provided;
 	}
-	if (res != TEE_SUCCESS) {
+	if (res != KM_ERROR_OK) {
 		EMSG("Update operation failed with error code %x", res);
 		goto out;
 	}
+
 	TEE_MemMove(out, &input_consumed, sizeof(input_consumed));
 	out += SIZE_LENGTH;
 	out += TA_serialize_blob(out, &output);
@@ -1244,6 +1065,7 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;
 	keymaster_operation_t operation = EMPTY_OPERATION;
 	TEE_ObjectHandle obj_h = TEE_HANDLE_NULL;
+	bool is_input_ext = false;
 
 	in = (uint8_t *) params[0].memref.buffer;
 	in_end = in + params[0].memref.size;
@@ -1281,11 +1103,7 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 	if (type == TEE_TYPE_AES && operation.mode == KM_MODE_GCM)
 		tag_len = operation.mac_length / 8;/* from bits to bytes */
 
-	/* make out buffer at least twice bigger
-	 * than input + GCM tag size in bytes
-	 */
-	out_size = (uint32_t) 2 * input.data_length +
-					tag_len + BLOCK_SIZE + key_size;//TODO fix it
+	out_size = TA_possibe_size(type, key_size, input, tag_len);
 	output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
 	if (!output.data) {
 		EMSG("Failed to allocate memory for output");
@@ -1294,8 +1112,8 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 	}
 	switch (type) {
 	case TEE_TYPE_AES:
-		res = TA_aes_finish(&operation, &input,
-					&output, &out_size, tag_len);
+		res = TA_aes_finish(&operation, &input, &output, &out_size,
+					tag_len, &is_input_ext);
 		break;
 	case TEE_TYPE_RSA_KEYPAIR:
 		res = TA_rsa_finish(&operation, &input,

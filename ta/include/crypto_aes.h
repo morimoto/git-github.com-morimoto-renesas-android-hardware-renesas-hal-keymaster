@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_OPTEE_AES_H
-#define ANDROID_OPTEE_AES_H
+#ifndef ANDROID_OPTEE_CRYPTO_AES_H
+#define ANDROID_OPTEE_CRYPTO_AES_H
 
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>
@@ -26,12 +26,18 @@
 #include "operations.h"
 #include "paddings.h"
 
-void TA_append_tag(keymaster_blob_t *output, uint32_t *out_size,
-			const uint8_t *tag, const uint32_t tag_len);
-
 keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 				keymaster_blob_t *input,
 				keymaster_blob_t *output, uint32_t *out_size,
-				uint32_t tag_len);
+				uint32_t tag_len, bool *is_input_ext);
 
-#endif/*ANDROID_OPTEE_AES_H*/
+keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
+				keymaster_blob_t *input,
+				keymaster_blob_t *output,
+				uint32_t *out_size,
+				const uint32_t input_provided,
+				size_t *input_consumed,
+				const keymaster_key_param_set_t *in_params,
+				bool *is_input_ext);
+
+#endif/*ANDROID_OPTEE_CRYPTO_AES_H*/

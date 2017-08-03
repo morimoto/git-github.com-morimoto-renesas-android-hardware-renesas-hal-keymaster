@@ -17,6 +17,106 @@
 
 #include "auth.h"
 
+static uint8_t authTokenKey_ID[] = { 0xB1, 0x60, 0x71, 0x75 };
+static TEE_ObjectHandle authTokenKeyObj = TEE_HANDLE_NULL;
+
+TEE_Result TA_InitializeAuthTokenKey(void)
+{
+	TEE_Result	res;
+
+	DMSG("Checking auth_token key secret");
+	res = TEE_OpenPersistentObject(TEE_STORAGE_PRIVATE,
+			authTokenKey_ID, sizeof(authTokenKey_ID),
+			TEE_DATA_FLAG_ACCESS_READ, &authTokenKeyObj);
+	if (res == TEE_ERROR_ITEM_NOT_FOUND) {
+		uint8_t authTokenKeyData[HMAC_SHA256_KEY_SIZE_BYTE];
+		DMSG("Create auth_token key secret");
+
+		TEE_GenerateRandom(authTokenKeyData, sizeof(authTokenKeyData));
+		res = TEE_CreatePersistentObject(TEE_STORAGE_PRIVATE,
+				authTokenKey_ID, sizeof(authTokenKey_ID),
+				TEE_DATA_FLAG_ACCESS_WRITE,
+				TEE_HANDLE_NULL, NULL, 0, &authTokenKeyObj);
+		if (res != TEE_SUCCESS) {
+			EMSG("Failed to create auth_token key secret");
+		} else {
+			res = TEE_WriteObjectData(authTokenKeyObj,
+					(void *)authTokenKeyData,
+					sizeof(authTokenKeyData));
+			if (res != TEE_SUCCESS) {
+				EMSG("Failed to write auth_token key secret");
+			}
+		}
+	} else if (res == TEE_SUCCESS) {
+		DMSG("auth_token key secret is already created");
+	} else {
+		EMSG("Failed to open auth_token key secret, error=%X", res);
+	}
+
+	return res;
+}
+
+static TEE_Result TA_GetClientIdentity(TEE_Identity *identity)
+{
+	TEE_Result res = TEE_SUCCESS;
+
+	/*
+	 * TODO remove cast when OP-TEE changes name parameter type
+	 * to const char *
+	 */
+	res = TEE_GetPropertyAsIdentity(TEE_PROPSET_CURRENT_CLIENT,
+			(char *)"gpd.client.identity", identity);
+
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to get property");
+		goto exit;
+	}
+
+exit:
+	return res;
+}
+
+keymaster_error_t TA_GetAuthTokenKey(TEE_Param params[TEE_NUM_PARAMS])
+{
+	TEE_Result		res = TEE_SUCCESS;
+	TEE_Identity		identity;
+	uint8_t			authTokenKeyData[HMAC_SHA256_KEY_SIZE_BYTE];
+	uint32_t		readSize = 0;
+
+	res = TA_GetClientIdentity(&identity);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to get identity property");
+		goto exit;
+	}
+
+	if (identity.login != TEE_LOGIN_TRUSTED_APP) {
+		EMSG("Not trusted app trying to get auth_token key");
+		res = TEE_ERROR_ACCESS_DENIED;
+		goto exit;
+	}
+
+	DMSG("%pUl requests auth_token key", (void *)&identity.uuid);
+
+	res = TEE_ReadObjectData(authTokenKeyObj, authTokenKeyData,
+			sizeof(authTokenKeyData), &readSize);
+	if (res != TEE_SUCCESS || sizeof(authTokenKeyData) != readSize) {
+		EMSG("Failed to read secret data, bytes = %u", readSize);
+		goto exit;
+	}
+
+	if (params[1].memref.size < sizeof(authTokenKeyData)) {
+		EMSG("Output buffer to small");
+		res = TEE_ERROR_SHORT_BUFFER;
+		goto exit;
+	}
+
+	memcpy(params[1].memref.buffer, authTokenKeyData,
+			sizeof(authTokenKeyData));
+
+exit:
+	return res;
+}
+
 keymaster_error_t TA_do_auth(const keymaster_key_param_set_t in_params,
 				const keymaster_key_param_set_t key_params)
 {

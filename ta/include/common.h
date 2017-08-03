@@ -47,6 +47,11 @@ enum gatekeeper_command {
 	KM_UPDATE				= 12,
 	KM_FINISH				= 13,
 	KM_ABORT				= 14,
+/*
+ * Please keep this constant consistent with KM_GET_AUTHTOKEN_KEY define that
+ * is defined in Gatekeeper
+ */
+	KM_GET_AUTHTOKEN_KEY			= 65536,
 };
 
 typedef enum{

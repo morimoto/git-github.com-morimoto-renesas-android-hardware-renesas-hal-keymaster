@@ -30,11 +30,21 @@ static TEE_TASessionHandle session_rngSTA = TEE_HANDLE_NULL;
 
 TEE_Result TA_CreateEntryPoint(void)
 {
+	TEE_Result	res = TEE_SUCCESS;
+
 	configured = false;
 	config_success = false;
 	TA_reset_operations_table();
 	TA_create_secret_key();
-	return TEE_SUCCESS;
+
+	res = TA_InitializeAuthTokenKey();
+	if (res != TEE_SUCCESS) {
+		EMSG("Something wrong with auth_token key");
+		goto exit;
+	}
+
+exit:
+	return res;
 }
 
 void TA_DestroyEntryPoint(void)
@@ -1132,6 +1142,14 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __unused,
 		EMSG("Wrong parameters");
 		return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
 	}
+
+	switch(cmd_id) {
+	case KM_GET_AUTHTOKEN_KEY :
+		return TA_GetAuthTokenKey(params);
+	default :
+		;
+	}
+
 	if (cmd_id != KM_CONFIGURE && !config_success) {
 		EMSG("Keystore was not configured!");
 		return KM_ERROR_KEYMASTER_NOT_CONFIGURED;

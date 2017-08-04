@@ -17,7 +17,7 @@
 
 #include "paddings.h"
 
-bool TA_check_pkcs7_pad(keymaster_blob_t *output, const bool aligned)
+bool TA_check_pkcs7_pad(keymaster_blob_t *output)
 {
 	uint32_t last_i;
 	uint8_t pad;
@@ -34,8 +34,6 @@ bool TA_check_pkcs7_pad(keymaster_blob_t *output, const bool aligned)
 		if (output->data[last_i - i] != pad)
 			return false;
 	}
-	if (aligned && pad != BLOCK_SIZE)
-		return false;
 	return true;
 }
 
@@ -110,7 +108,7 @@ keymaster_error_t TA_remove_pkcs7_pad(keymaster_blob_t *output,
 		return KM_ERROR_OK;
 	pad = output->data[output->data_length - 1];
 	DMSG("PKCS7 REMOVE pad = %x", pad);
-	if (!TA_check_pkcs7_pad(output, false)) {
+	if (!TA_check_pkcs7_pad(output)) {
 		EMSG("Failed to read PKCS7 padding");
 		return KM_ERROR_INVALID_ARGUMENT;
 	}

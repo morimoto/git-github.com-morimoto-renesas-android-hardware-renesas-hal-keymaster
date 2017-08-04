@@ -38,7 +38,7 @@ keymaster_error_t TA_add_pkcs7_pad(keymaster_blob_t *input,
 keymaster_error_t TA_remove_pkcs7_pad(keymaster_blob_t *output,
 					uint32_t *out_size);
 
-bool TA_check_pkcs7_pad(keymaster_blob_t *output, const bool aligned);
+bool TA_check_pkcs7_pad(keymaster_blob_t *output);
 
 keymaster_error_t TA_do_rsa_pad(uint8_t **input, uint32_t *input_l,
 				const uint32_t key_size);

@@ -81,6 +81,11 @@ keymaster_error_t TA_abort_operation(
 			operations[i].nonce.data = NULL;
 			operations[i].nonce.data_length = 0;
 			operations[i].padded = false;
+			operations[i].first = true;
+			if (operations[i].last_block.data)
+				TEE_Free(operations[i].last_block.data);
+			operations[i].last_block.data = NULL;
+			operations[i].last_block.data_length = 0;
 			break;
 		}
 	}
@@ -109,6 +114,9 @@ void TA_reset_operations_table(void)
 		operations[i].prev_in_size = UNDEFINED;
 		operations[i].nonce.data = NULL;
 		operations[i].nonce.data_length = 0;
+		operations[i].last_block.data = NULL;
+		operations[i].last_block.data_length = 0;
+		operations[i].first = true;
 		operations[i].padded = false;
 	}
 }

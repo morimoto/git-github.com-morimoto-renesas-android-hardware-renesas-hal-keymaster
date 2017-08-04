@@ -55,28 +55,30 @@
 #define EMPTY_KEY_BLOB {.key_material = NULL, .key_material_size = 0}
 #define EMPTY_PARAM_SET {.params = NULL, .length = 0}
 #define EMPTY_CHARACTS {					\
-			.hw_enforced = EMPTY_PARAM_SET,	\
+			.hw_enforced = EMPTY_PARAM_SET,		\
 			.sw_enforced = EMPTY_PARAM_SET}
 #define EMPTY_OPERATION {					\
-			.key = NULL,					\
+			.key = NULL,				\
 			.nonce = EMPTY_BLOB,			\
 			.op_handle = UNDEFINED,			\
 			.purpose = UNDEFINED,			\
 			.padding = UNDEFINED,			\
-			.mode = UNDEFINED,				\
-			.sf_item = NULL,				\
+			.mode = UNDEFINED,			\
+			.sf_item = NULL,			\
 			.last_access = NULL,			\
-			.operation = TEE_HANDLE_NULL,	\
-			.digest_op = TEE_HANDLE_NULL,	\
+			.operation = TEE_HANDLE_NULL,		\
+			.digest_op = TEE_HANDLE_NULL,		\
 			.prev_in_size = UNDEFINED,		\
 			.min_sec = UNDEFINED,			\
 			.mac_length = UNDEFINED,		\
-			.a_data_length = 0,				\
-			.a_data = NULL,					\
-			.do_auth = false,				\
-			.got_input = false,				\
-			.buffering = false,				\
-			.padded = false}
+			.a_data_length = 0,			\
+			.a_data = NULL,				\
+			.do_auth = false,			\
+			.got_input = false,			\
+			.buffering = false,			\
+			.padded = false,			\
+			.first = true,				\
+			.last_block = EMPTY_BLOB}
 
 uint64_t identifier_rsa[] = {1, 2, 840, 113549, 1, 1, 1};
 /* RSAPrivateKey ::= SEQUENCE {

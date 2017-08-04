@@ -209,6 +209,7 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 				operation->padded = true;
 		}
 		if (!operation->padded) {
+			EMSG("Padding was not removed");
 			res = KM_ERROR_INVALID_ARGUMENT;
 		}
 	}
@@ -216,6 +217,47 @@ out:
 	if (tag)
 		TEE_Free(tag);
 	return res;
+}
+
+static keymaster_error_t TA_store_last_block(keymaster_blob_t *output,
+					size_t *input_consumed,
+					keymaster_operation_t *op)
+{
+	if (output->data_length < BLOCK_SIZE) {
+		EMSG("Output is too smal to be stored");
+		return KM_ERROR_UNKNOWN_ERROR;
+	}
+	op->last_block.data = TEE_Malloc(BLOCK_SIZE, TEE_MALLOC_FILL_ZERO);
+	if (!op->last_block.data) {
+		EMSG("Failed to allocate memory for last block buffer");
+		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+	}
+	TEE_MemMove(op->last_block.data, output->data +
+		output->data_length - BLOCK_SIZE, BLOCK_SIZE);
+	output->data_length -= BLOCK_SIZE;
+	*input_consumed -= BLOCK_SIZE;
+	op->prev_in_size += BLOCK_SIZE;
+	op->last_block.data_length = BLOCK_SIZE;
+	return KM_ERROR_OK;
+}
+
+static keymaster_error_t TA_restore_last_block(keymaster_blob_t *output,
+					size_t *input_consumed,
+					keymaster_operation_t *op,
+					uint32_t *pos)
+{
+	if (op->last_block.data_length != BLOCK_SIZE) {
+		EMSG("Stored block has a bad size");
+		return KM_ERROR_UNKNOWN_ERROR;
+	}
+	TEE_MemMove(output->data, op->last_block.data, BLOCK_SIZE);
+	*input_consumed += BLOCK_SIZE;
+	*pos += BLOCK_SIZE;
+	op->last_block.data_length = 0;
+	TEE_Free(op->last_block.data);
+	op->last_block.data = NULL;
+	output->data_length += BLOCK_SIZE;
+	return KM_ERROR_OK;
 }
 
 keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
@@ -234,6 +276,14 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 
 	/* KM_MODE_CBC, KM_MODE_ECB */
 	if (!TA_is_stream_cipher(operation->mode)) {
+		if (operation->last_block.data != NULL && operation->last_block.data_length != 0) {
+			DMSG("Restore last block");
+			res = TA_restore_last_block(output, input_consumed, operation, &pos);
+			if (res != KM_ERROR_OK) {
+				EMSG("Failed to restore last block");
+				goto out;
+			}
+		}
 		if (operation->padding == KM_PAD_PKCS7) {
 			if (operation->prev_in_size == input->data_length) {
 				DMSG("End of data reached");
@@ -277,7 +327,7 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 			goto out;
 		operation->padded = true;
 	}
-	remainder = input->data_length;
+	remainder = input->data_length - pos;
 	if (operation->mode == KM_MODE_GCM) {
 		/* check presence of associated data for AES keys */
 		res = TA_aes_gcm_prepare(operation, in_params, input,
@@ -318,8 +368,7 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 			*input_consumed += in_size;
 			operation->prev_in_size -= in_size;
 			remainder -= in_size;
-			if (remainder < BLOCK_SIZE || (remainder == BLOCK_SIZE
-					&& operation->buffering))
+			if (remainder < BLOCK_SIZE)
 				break;
 		}
 	}
@@ -327,13 +376,25 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 		*input_consumed = input_provided;
 	if (res == KM_ERROR_OK && operation->padding == KM_PAD_PKCS7 &&
 			operation->purpose == KM_PURPOSE_DECRYPT
-			&& ((*input_consumed == input_provided
-			&& !operation->buffering) ||
-			TA_check_pkcs7_pad(output, true))) {
-		res = TA_remove_pkcs7_pad(output, out_size);
-		if (res == KM_ERROR_OK)
-			operation->padded = true;
+			&& *input_consumed == input_provided) {
+		if (operation->buffering && TA_check_pkcs7_pad(output)
+						&& operation->first) {
+			DMSG("Store last block");
+			res = TA_store_last_block(output, input_consumed,
+								operation);
+			if (res != KM_ERROR_OK) {
+				EMSG("Failed to store last block");
+				goto out;
+			}
+		}
+		if (!operation->buffering || TA_check_pkcs7_pad(output)) {
+			DMSG("Remove PKCS7 pad");
+			res = TA_remove_pkcs7_pad(output, out_size);
+			if (res == KM_ERROR_OK)
+				operation->padded = true;
+		}
 	}
+	operation->first = false;
 out:
 	return res;
 }

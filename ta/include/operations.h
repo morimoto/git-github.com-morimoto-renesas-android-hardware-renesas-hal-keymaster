@@ -35,6 +35,7 @@ typedef struct keymaster_blob_list_item_t {
 typedef struct {
 	keymaster_key_blob_t *key;
 	keymaster_blob_t nonce;
+	keymaster_blob_t last_block;
 	keymaster_operation_handle_t op_handle;
 	keymaster_purpose_t purpose;
 	keymaster_padding_t padding;
@@ -52,6 +53,7 @@ typedef struct {
 	bool got_input;
 	bool buffering;
 	bool padded;
+	bool first;
 } keymaster_operation_t;
 
 void TA_free_blob_list(keymaster_blob_list_item_t *item);

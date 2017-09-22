@@ -30,7 +30,7 @@
 #include "optee_keymaster.h"
 
 #undef LOG_TAG
-#define LOG_TAG "Salvator Keymaster HAL"
+#define LOG_TAG "Renesas Keymaster HAL"
 
 #define SLEEP_TIME 500000
 #define MAX_SLEEP_TIME 5000000
@@ -104,7 +104,7 @@ struct keystore_module HAL_MODULE_INFO_SYM = {
         .module_api_version = KEYMASTER_MODULE_API_VERSION_2_0,
         .hal_api_version = HARDWARE_HAL_API_VERSION,
         .id = KEYSTORE_HARDWARE_MODULE_ID,
-        .name = "Salvator Keymaster HAL",
+        .name = "Renesas Keymaster HAL",
         .author = "Renesas Electronics",
         .methods = &keymaster_module_methods,
         .dso = 0,

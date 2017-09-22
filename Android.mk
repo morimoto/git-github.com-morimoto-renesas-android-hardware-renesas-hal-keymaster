@@ -20,7 +20,7 @@ LOCAL_PATH:= $(call my-dir)
 ################################################################################
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := keystore.salvator
+LOCAL_MODULE := keystore.$(TARGET_PRODUCT)
 LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_VENDOR_MODULE := true

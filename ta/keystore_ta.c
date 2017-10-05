@@ -31,6 +31,15 @@ static TEE_TASessionHandle session_rngSTA = TEE_HANDLE_NULL;
 TEE_Result TA_CreateEntryPoint(void)
 {
 	TEE_Result	res = TEE_SUCCESS;
+	TEE_Param	params[TEE_NUM_PARAMS];
+
+	const TEE_UUID asn1_parser_uuid = ASN1_PARSER_UUID;
+	const TEE_UUID rng_entropy_uuid = RNG_ENTROPY_UUID;
+
+	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE);
 
 	configured = false;
 	config_success = false;
@@ -43,6 +52,20 @@ TEE_Result TA_CreateEntryPoint(void)
 		goto exit;
 	}
 
+	res = TEE_OpenTASession(&asn1_parser_uuid, TEE_TIMEOUT_INFINITE,
+			exp_param_types, params, &sessionSTA, NULL);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to create session with static TA (%x)", res);
+		goto exit;
+	}
+
+	res = TEE_OpenTASession(&rng_entropy_uuid, TEE_TIMEOUT_INFINITE,
+			exp_param_types, params, &session_rngSTA, NULL);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to create session with RNG static TA (%x)", res);
+		goto exit;
+	}
+
 exit:
 	return res;
 }
@@ -50,36 +73,27 @@ exit:
 void TA_DestroyEntryPoint(void)
 {
 	TA_free_master_key();
+	TEE_CloseTASession(sessionSTA);
+	TEE_CloseTASession(session_rngSTA);
+	sessionSTA = TEE_HANDLE_NULL;
+	session_rngSTA = TEE_HANDLE_NULL;
 }
 
 TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
-		TEE_Param  params[TEE_NUM_PARAMS], void **sess_ctx __unused)
+		TEE_Param  params[TEE_NUM_PARAMS] __unused, void **sess_ctx __unused)
 {
-	keymaster_error_t res = KM_ERROR_OK;
 	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE);
-	TEE_UUID uuid = ASN1_PARSER_UUID;
-	TEE_UUID uuid_rng = RNG_ENTROPY_UUID;
-
 	if (param_types != exp_param_types)
 		return TEE_ERROR_BAD_PARAMETERS;
-	res = TEE_OpenTASession(&uuid, TEE_TIMEOUT_INFINITE,
-			exp_param_types, params, &sessionSTA, NULL);
-	if (res != TEE_SUCCESS)
-		EMSG("Failed to create session with static TA (%x)", res);
-	res = TEE_OpenTASession(&uuid_rng, TEE_TIMEOUT_INFINITE,
-			exp_param_types, params, &session_rngSTA, NULL);
-	if (res != TEE_SUCCESS)
-		EMSG("Failed to create session with RNG static TA (%x)", res);
+
 	return TEE_SUCCESS;
 }
 
 void TA_CloseSessionEntryPoint(void *sess_ctx __unused)
 {
-	TEE_CloseTASession(sessionSTA);
-	TEE_CloseTASession(session_rngSTA);
 }
 
 static uint32_t TA_possibe_size(const uint32_t type, const uint32_t key_size,
@@ -379,6 +393,7 @@ out:
 	TA_free_params(&chr.sw_enforced);
 	TA_free_params(&chr.hw_enforced);
 	TA_free_params(&params_t);
+
 	return res;
 }
 
@@ -1142,6 +1157,8 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __unused,
 		EMSG("Wrong parameters");
 		return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
 	}
+
+	DMSG("Keymaster TA invoke command cmd_id %u", cmd_id);
 
 	switch(cmd_id) {
 	case KM_GET_AUTHTOKEN_KEY :

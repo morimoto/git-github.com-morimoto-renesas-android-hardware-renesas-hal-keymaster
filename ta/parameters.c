@@ -701,7 +701,7 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 			*do_auth = true;
 		if (suid_count > 0 && auth_timeout != UNDEFINED) {
 			res = TA_check_auth_token(suid, suid_count,
-						auth_type, auth_token);
+						auth_type, &auth_token);
 			if (res != KM_ERROR_OK)
 				goto out_cp;
 		} else {

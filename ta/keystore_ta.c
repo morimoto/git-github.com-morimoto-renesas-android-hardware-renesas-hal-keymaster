@@ -454,9 +454,15 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 				goto out;
 			}
 		}
-		attrs_in_count = 1;
-		attrs_in = TEE_Malloc(sizeof(TEE_Attribute) * attrs_in_count,
+		attrs_in = TEE_Malloc(sizeof(TEE_Attribute),
 							TEE_MALLOC_FILL_ZERO);
+		if (!attrs_in) {
+			EMSG("Failed to allocate memory for attributes");
+			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			goto out;
+		}
+		attrs_in_count = 1;
+
 		TEE_InitRefAttribute(attrs_in, TEE_ATTR_SECRET_VALUE,
 				(void *) key_data.data, key_data.data_length);
 		if (algorithm == KM_ALGORITHM_HMAC && (key_size % 8 != 0 ||
@@ -465,13 +471,13 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 			EMSG("HMAC key size must be multiple of 8 in range from %d to %d",
 						MIN_KEY_HMAC, MAX_KEY_HMAC);
 			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
-			goto out;
+			goto free_attrs;
 		} else if (algorithm == KM_ALGORITHM_AES &&
 				key_size != 128 && key_size != 192
 				&& key_size != 256) {
 			EMSG("Unsupported key size! Supported only 128, 192 and 256");
 			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
-			goto out;
+			goto free_attrs;
 		}
 	} else {/* KM_KEY_FORMAT_PKCS8 */
 		if (algorithm != KM_ALGORITHM_RSA &&
@@ -549,10 +555,13 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 	out += TA_serialize_key_blob(out, &key_blob);
 	out += TA_serialize_characteristics(out, &characts);
 out:
-	TA_free_params(&params_t);
-	if (key_data.data)
+	if ((key_data.data && key_format != KM_KEY_FORMAT_RAW) ||
+		(key_data.data && key_format == KM_KEY_FORMAT_RAW && res != KM_ERROR_OK)) {
 		TEE_Free(key_data.data);
+	}
+free_attrs:
 	free_attrs(attrs_in, attrs_in_count);
+	TA_free_params(&params_t);
 	TA_free_params(&characts.sw_enforced);
 	TA_free_params(&characts.hw_enforced);
 	if (key_material)
@@ -764,7 +773,7 @@ static keymaster_error_t TA_Begin(TEE_Param params[TEE_NUM_PARAMS])
 	keymaster_key_param_set_t out_params = EMPTY_PARAM_SET;	/* OUT */
 	keymaster_operation_handle_t operation_handle = 0;	/* OUT */
 	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;
-	keymaster_key_param_t nonce_param;
+	keymaster_key_param_t *nonce_param = NULL;
 	keymaster_error_t res = KM_ERROR_OK;
 	keymaster_algorithm_t algorithm = UNDEFINED;
 	keymaster_blob_t nonce = EMPTY_BLOB;
@@ -840,11 +849,22 @@ static keymaster_error_t TA_Begin(TEE_Param params[TEE_NUM_PARAMS])
 		}
 		out_params.length = 1;
 		secretIV = TEE_Malloc(IVsize, TEE_MALLOC_FILL_ZERO);
+		if (!secretIV) {
+			EMSG("Failed to allocate memory for secretIV");
+			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			goto out;
+		}
+		nonce_param = TEE_Malloc(sizeof(keymaster_key_param_t), TEE_MALLOC_FILL_ZERO);
+		if (!nonce_param) {
+			EMSG("Failed to allocate memory for parameters");
+			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			goto out;
+		}
 		TEE_GenerateRandom(secretIV, IVsize);
-		nonce_param.tag = KM_TAG_NONCE;
-		nonce_param.key_param.blob.data = secretIV;
-		nonce_param.key_param.blob.data_length = IVsize;
-		out_params.params = &nonce_param;
+		nonce_param->tag = KM_TAG_NONCE;
+		nonce_param->key_param.blob.data = secretIV;
+		nonce_param->key_param.blob.data_length = IVsize;
+		out_params.params = nonce_param;
 		nonce.data_length = IVsize;
 		nonce.data = secretIV;
 	}
@@ -873,8 +893,6 @@ static keymaster_error_t TA_Begin(TEE_Param params[TEE_NUM_PARAMS])
 out:
 	if (obj_h != TEE_HANDLE_NULL)
 		TEE_FreeTransientObject(obj_h);
-	if (secretIV)
-		TEE_Free(secretIV);
 	if (key.key_material)
 		TEE_Free(key.key_material);
 	if (res != KM_ERROR_OK) {

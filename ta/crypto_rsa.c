@@ -134,7 +134,6 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 	uint8_t digest_out[KM_MAX_DIGEST_SIZE];
 	uint8_t *in_buf = NULL;
 	uint32_t in_buf_l = 0;
-	bool clear_in_buf = false;
 
 	if (*operation->digest_op != TEE_HANDLE_NULL) {
 		res = TEE_DigestDoFinal(*operation->digest_op, input->data,
@@ -178,9 +177,9 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 				 */
 				res = TA_do_rsa_pad(&in_buf, &in_buf_l,
 								key_size);
+				input->data = in_buf; /*Will be freed in TA_finish*/
 				if (res != KM_ERROR_OK)
 					goto out;
-				clear_in_buf = true;
 			}
 		}
 	}
@@ -249,15 +248,13 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 		 * and TEE_AsymmetricEncrypt for unpadded operation truncate all
 		 * zeroes but one if it is the last. Restore result array.
 		 */
-		 res = TA_do_rsa_pad(&output->data, out_size, key_size);
+		res = TA_do_rsa_pad(&output->data, out_size, key_size);
 	}
 	/* Convert error code to Android type */
 	if (res == (int) TEE_ERROR_BAD_PARAMETERS &&
 				operation->padding != KM_PAD_NONE)
 		res = KM_ERROR_INVALID_INPUT_LENGTH;
 out:
-	if (clear_in_buf && in_buf)
-		TEE_Free(in_buf);
 	return res;
 }
 

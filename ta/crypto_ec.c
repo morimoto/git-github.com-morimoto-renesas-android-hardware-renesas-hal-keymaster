@@ -44,7 +44,7 @@ static keymaster_error_t TA_check_ec_data_size(uint8_t **data, uint32_t *data_l,
 			TA_short_be_rshift(*data, *data_l,
 				8 - (key_size & 0x7)/*bits*/);
 		}
-	} else if (*data_l < key_size_bytes) {
+	} else {
 		ptr = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
 		if (!ptr) {
 			EMSG("Failed to allocate memory for extended data");
@@ -53,7 +53,8 @@ static keymaster_error_t TA_check_ec_data_size(uint8_t **data, uint32_t *data_l,
 		}
 		TEE_MemMove(ptr + (key_size_bytes - *data_l), *data, *data_l);
 		*data_l = key_size_bytes;
-		TEE_Free(*data);
+		if (*clear_in_buf)
+			TEE_Free(*data);
 		*data = ptr;
 		*clear_in_buf = true;
 	}

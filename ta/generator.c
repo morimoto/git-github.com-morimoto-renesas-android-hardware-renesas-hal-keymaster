@@ -334,6 +334,11 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 		type = TEE_TYPE_RSA_KEYPAIR;
 		attrs_in = TEE_Malloc(sizeof(TEE_Attribute),
 							TEE_MALLOC_FILL_ZERO);
+		if (!attrs_in) {
+			EMSG("Failed to allocate memory for attributes");
+			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			goto gk_out;
+		}
 		attrs_in_count = 1;
 		buf_pe = TEE_Malloc(sizeof(rsa_public_exponent),
 							TEE_MALLOC_FILL_ZERO);
@@ -355,6 +360,11 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 		type = TEE_TYPE_ECDSA_KEYPAIR;
 		attrs_in = TEE_Malloc(sizeof(TEE_Attribute),
 							TEE_MALLOC_FILL_ZERO);
+		if (!attrs_in) {
+			EMSG("Failed to allocate memory for attributes");
+			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			goto gk_out;
+		}
 		attrs_in_count = 1;
 		curve = TA_get_curve_nist(key_size);
 		if (curve == UNDEFINED) {
@@ -426,8 +436,6 @@ gk_out:
 	if (obj_h != TEE_HANDLE_NULL)
 		TEE_FreeTransientObject(obj_h);
 	free_attrs(attrs_in, attrs_in_count);
-	if (buf_pe)
-		TEE_Free(buf_pe);
 	return res;
 }
 
@@ -549,6 +557,12 @@ keymaster_error_t TA_restore_key(uint8_t *key_material,
 			if (!buf) {
 				res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
 				EMSG("Failed to allocate memory for attribute");
+				/*
+				 * If error occurs, attrs_count should be equal i,
+				 * because free_attrs will try to free memory for elements,
+				 * which didn't allocate.
+				 */
+				attrs_count = i;
 				goto out_rk;
 			}
 			TEE_MemMove(buf, key_material + padding, attr_size);

@@ -53,7 +53,8 @@ static keymaster_error_t TA_append_input(keymaster_blob_t *input,
 	}
 	TEE_MemMove(data, operation->a_data, push_to_input);
 	TEE_MemMove(data + push_to_input, input->data, input->data_length);
-	TEE_Free(input->data);
+	if (*is_input_ext)
+		TEE_Free(input->data);
 	input->data = data;
 	input->data_length += push_to_input;
 	operation->a_data_length -= push_to_input;

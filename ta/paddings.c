@@ -87,7 +87,8 @@ keymaster_error_t TA_add_pkcs7_pad(keymaster_blob_t *input,
 	}
 	TEE_MemMove(data, input->data, input->data_length);
 	TEE_MemFill(data + input->data_length, pad, pad);
-	TEE_Free(input->data);
+	if (*is_input_ext)
+		TEE_Free(input->data);
 	input->data = data;
 	input->data_length = input->data_length + pad;
 	*is_input_ext = true;

@@ -312,8 +312,24 @@ keymaster_error_t TA_append_sf_data(keymaster_blob_t *input,
 	uint8_t *ptr = NULL;
 	keymaster_blob_list_item_t *current = operation->sf_item;
 
-	if (operation->sf_item == NULL)
+	if (operation->sf_item == NULL) {
+		if (!(*is_input_ext)) {
+			/*
+			 * In this case input is stack variable and we need to
+			 * allocate memory for next operations.
+			 */
+			ptr = TEE_Malloc(input->data_length, TEE_MALLOC_FILL_ZERO);
+			if (!ptr) {
+				EMSG("Failed to allocate memory for input data buffer");
+				return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			}
+			TEE_MemMove(ptr, input->data, input->data_length);
+			*is_input_ext = true;
+			input->data = ptr;
+		}
 		return KM_ERROR_OK;
+	}
+
 	while (current != NULL) {
 		size += current->data.data_length;
 		current = current->next;
@@ -333,7 +349,8 @@ keymaster_error_t TA_append_sf_data(keymaster_blob_t *input,
 		current = current->next;
 	}
 	TEE_MemMove(ptr + padding, input->data, input->data_length);
-	TEE_Free(input->data);
+	if (*is_input_ext)
+		TEE_Free(input->data);
 	input->data = ptr;
 	input->data_length = size + input->data_length;
 	*is_input_ext = true;

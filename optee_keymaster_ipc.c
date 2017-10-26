@@ -211,10 +211,10 @@ keymaster_error_t optee_keystore_call(uint32_t cmd, void* in, uint32_t in_size, 
     if (res != TEEC_SUCCESS) {
         ALOGI("TEEC_InvokeCommand failed with code 0x%08x (%s) origin 0x%08x",
               res, keymaster_error_message(res), err_origin);
-	if (res == 0xffff3024) {
-            optee_keystore_disconnect();
-            optee_keystore_connect();
-	}
+	    if (res == TEEC_ERROR_TARGET_DEAD) {
+                optee_keystore_disconnect();
+                optee_keystore_connect();
+	    }
     }
     return (keymaster_error_t)res;
 }

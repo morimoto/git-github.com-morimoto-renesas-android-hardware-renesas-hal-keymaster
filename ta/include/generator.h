@@ -28,16 +28,16 @@
 #define KM_MAX_ATTR_SIZE 512
 #define MAX_HMAC_MD5 512
 #define MIN_HMAC_MD5 64
-#define MAX_HMAC_SHA1 512
-#define MIN_HMAC_SHA1 80
-#define MAX_HMAC_SHA224 512
-#define MIN_HMAC_SHA224 112
+#define MAX_HMAC_SHA1 1024
+#define MIN_HMAC_SHA1 64
+#define MAX_HMAC_SHA224 1024
+#define MIN_HMAC_SHA224 64
 #define MAX_HMAC_SHA256 1024
-#define MIN_HMAC_SHA256 192
+#define MIN_HMAC_SHA256 64
 #define MAX_HMAC_SHA384 1024
-#define MIN_HMAC_SHA384 256
+#define MIN_HMAC_SHA384 64
 #define MAX_HMAC_SHA512 1024
-#define MIN_HMAC_SHA512 256
+#define MIN_HMAC_SHA512 64
 
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>

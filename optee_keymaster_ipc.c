@@ -22,7 +22,6 @@
 #include <cutils/log.h>
 #include <tee_client_api.h>
 #include <hardware/keymaster2.h>
-#include <tee_client_api.h>
 
 #include "optee_keymaster_ipc.h"
 #include "common.h"

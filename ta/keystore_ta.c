@@ -23,8 +23,6 @@
 #include "ta_ca_defs.h"
 #include "keystore_ta.h"
 
-static bool config_success;
-static bool configured;
 static TEE_TASessionHandle sessionSTA = TEE_HANDLE_NULL;
 static TEE_TASessionHandle session_rngSTA = TEE_HANDLE_NULL;
 
@@ -40,9 +38,6 @@ TEE_Result TA_CreateEntryPoint(void)
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE);
-
-	configured = false;
-	config_success = false;
 	TA_reset_operations_table();
 	TA_create_secret_key();
 
@@ -120,60 +115,6 @@ static uint32_t TA_possibe_size(const uint32_t type, const uint32_t key_size,
 	default:/* HMAC */
 		return KM_MAX_DIGEST_SIZE;
 	}
-}
-
-static keymaster_error_t check_patch_and_ver(const uint32_t patch,
-						const uint32_t ver)
-{
-	/* TODO CONFIGURE. Add coparasion
-	 * velues with enother from bootloader
-	 */
-	if (patch != UNDEFINED && ver != UNDEFINED)
-		config_success = true;
-	return KM_ERROR_OK;
-}
-
-static keymaster_error_t TA_Configure(TEE_Param params[TEE_NUM_PARAMS])
-{
-	uint8_t *in = NULL;
-	uint8_t *in_end = NULL;
-	unsigned int os_ver = UNDEFINED;
-	unsigned int os_patch = UNDEFINED;
-	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;	/* IN */
-	keymaster_error_t res = KM_ERROR_OK;
-
-	in = (uint8_t *) params[0].memref.buffer;
-	in_end = in + params[0].memref.size;
-	if (configured) {
-		DMSG("Keystore already configured");
-		goto out;
-	}
-	configured = true;
-	in += TA_deserialize_param_set(in, in_end, &params_t, false, &res);
-	if (res != KM_ERROR_OK)
-		goto out;
-
-	for (size_t i = 0; i < params_t.length; i++) {
-		switch ((params_t.params + i)->tag) {
-		case KM_TAG_OS_VERSION:
-			os_ver = (params_t.params + i)->key_param.integer;
-			break;
-		case KM_TAG_OS_PATCHLEVEL:
-			os_patch = (params_t.params + i)->key_param.integer;
-			break;
-		default:
-			IMSG("Undefined parameter\n");
-		}
-	}
-	if (os_ver == UNDEFINED || os_patch == UNDEFINED) {
-		EMSG("Configureation failed. Not all parameters are passed\n");
-		res = KM_ERROR_INVALID_ARGUMENT;
-		goto out;
-	}
-	res = check_patch_and_ver(os_patch, os_ver);
-out:
-	TA_free_params(&params_t);
-	return res;
 }
 
 static keymaster_error_t TA_Add_rng_entropy(TEE_Param params[TEE_NUM_PARAMS])
@@ -1179,19 +1120,6 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __unused,
 	DMSG("Keymaster TA invoke command cmd_id %u", cmd_id);
 
 	switch(cmd_id) {
-	case KM_GET_AUTHTOKEN_KEY :
-		return TA_GetAuthTokenKey(params);
-	default :
-		;
-	}
-
-	if (cmd_id != KM_CONFIGURE && !config_success) {
-		EMSG("Keystore was not configured!");
-		return KM_ERROR_KEYMASTER_NOT_CONFIGURED;
-	}
-	switch(cmd_id) {
-	case KM_CONFIGURE:
-		return TA_Configure(params);
 	case KM_ADD_RNG_ENTROPY:
 		return TA_Add_rng_entropy(params);
 	case KM_GENERATE_KEY:
@@ -1218,6 +1146,8 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __unused,
 		return TA_Finish(params);
 	case KM_ABORT:
 		return TA_Abort(params);
+	case KM_GET_AUTHTOKEN_KEY:
+		return TA_GetAuthTokenKey(params);
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;
 	}

@@ -22,7 +22,8 @@ LOCAL_PATH:= $(call my-dir)
 ################################################################################
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := keystore.$(TARGET_PRODUCT)
+LOCAL_MODULE := android.hardware.keymaster@3.0-service.renesas
+LOCAL_INIT_RC := android.hardware.keymaster@3.0-service.renesas.rc
 LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_VENDOR_MODULE := true
@@ -31,7 +32,7 @@ LOCAL_CFLAGS = -Wall -Werror
 LOCAL_CFLAGS += -DANDROID_BUILD
 
 LOCAL_SRC_FILES := \
-	module.cpp \
+	service.cpp \
 	optee_keymaster.cpp \
 	optee_keymaster_ipc.c
 
@@ -40,11 +41,15 @@ LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/ta/include
 
 LOCAL_SHARED_LIBRARIES := \
-	libcutils \
 	libteec \
-	liblog
+	liblog \
+	libhidlbase \
+	libhidltransport \
+	libhardware \
+	libutils \
+	android.hardware.keymaster@3.0
 
-include $(BUILD_SHARED_LIBRARY)
+include $(BUILD_EXECUTABLE)
 
 ################################################################################
 # Build keymaster HAL TA                                                       #

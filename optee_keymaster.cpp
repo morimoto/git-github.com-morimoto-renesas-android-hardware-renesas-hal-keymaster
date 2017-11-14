@@ -1,5 +1,4 @@
 /*
- *
  * Copyright (C) 2017 GlobalLogic
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,13 +14,9 @@
  * limitations under the License.
  */
 
-#include <errno.h>
-#include <stdio.h>
-#include <assert.h>
-#include <type_traits>
-#include <memory>
 #include <utils/Log.h>
-#include <utils/Errors.h>
+#include <memory>
+#include <new>
 
 #include "optee_keymaster.h"
 #include "optee_keymaster_ipc.h"
@@ -29,44 +24,848 @@
 #undef LOG_TAG
 #define LOG_TAG "OpteeKeymaster"
 
+namespace android {
+namespace hardware {
+namespace keymaster {
+namespace V3_0 {
 namespace renesas {
 
-const uint32_t RECV_BUF_SIZE = 8192;
-
-OpteeKeymasterDevice::OpteeKeymasterDevice(const hw_module_t* module)
-    : connected(false) {
-
-    static_assert(std::is_standard_layout<OpteeKeymasterDevice>::value,
-                    "OpteeKeymasterDevice must be standard layout");
-    static_assert(offsetof(OpteeKeymasterDevice, device_) == 0,
-                    "device_ must be the first member of OpteeKeymasterDevice");
-    static_assert(offsetof(OpteeKeymasterDevice, device_.common) == 0,
-                    "common must be the first member of keymaster2_device");
-
-    memset(&device_, 0, sizeof(device_));
-    device_.common.tag = HARDWARE_DEVICE_TAG;
-    device_.common.version = 1;
-    device_.common.module = const_cast<hw_module_t*>(module);
-    device_.common.close = close_device;
-
-    device_.configure = configure;
-    device_.add_rng_entropy = add_rng_entropy;
-    device_.attest_key = attest_key;
-    device_.generate_key = generate_key;
-    device_.get_key_characteristics = get_key_characteristics;
-    device_.import_key = import_key;
-    device_.export_key = export_key;
-    device_.upgrade_key = upgrade_key;
-    device_.delete_key = nullptr;/* delete_key; */
-    device_.delete_all_keys = nullptr;/* delete_all_keys; */
-    device_.begin = begin;
-    device_.update = update;
-    device_.finish = finish;
-    device_.abort = abort;
+static inline keymaster_tag_type_t typeFromTag(const keymaster_tag_t tag) {
+    return keymaster_tag_get_type(tag);
 }
 
-bool OpteeKeymasterDevice::connect(void) {
-    if (connected) {
+/*
+ * legacy_enum_conversion converts enums from hidl to keymaster and back. Currently, this is just a
+ * cast to make the compiler happy. One of two things should happen though:
+ * TODO The keymaster enums should become aliases for the hidl generated enums so that we have a
+ *      single point of truth. Then this cast function can go away.
+ */
+inline static keymaster_tag_t legacy_enum_conversion(const Tag value) {
+    return keymaster_tag_t(value);
+}
+
+inline static Tag legacy_enum_conversion(const keymaster_tag_t value) {
+    return Tag(value);
+}
+
+inline static keymaster_purpose_t legacy_enum_conversion(const KeyPurpose value) {
+    return keymaster_purpose_t(value);
+}
+
+inline static keymaster_key_format_t legacy_enum_conversion(const KeyFormat value) {
+    return keymaster_key_format_t(value);
+}
+
+inline static ErrorCode legacy_enum_conversion(const keymaster_error_t value) {
+    return ErrorCode(value);
+}
+
+/*
+ * KmParamSet implementation
+ */
+KmParamSet::KmParamSet():
+keymaster_key_param_set_t{nullptr, 0} { }
+
+KmParamSet::KmParamSet(const hidl_vec<KeyParameter> &keyParams) {
+    params = new keymaster_key_param_t[keyParams.size()];
+    length = keyParams.size();
+    for (size_t i = 0; i < keyParams.size(); ++i) {
+        auto tag = legacy_enum_conversion(keyParams[i].tag);
+        switch (typeFromTag(tag)) {
+        case KM_ENUM:
+        case KM_ENUM_REP:
+            params[i] = keymaster_param_enum(tag, keyParams[i].f.integer);
+            break;
+        case KM_UINT:
+        case KM_UINT_REP:
+            params[i] = keymaster_param_int(tag, keyParams[i].f.integer);
+            break;
+        case KM_ULONG:
+        case KM_ULONG_REP:
+            params[i] = keymaster_param_long(tag, keyParams[i].f.longInteger);
+            break;
+        case KM_DATE:
+            params[i] = keymaster_param_date(tag, keyParams[i].f.dateTime);
+            break;
+        case KM_BOOL:
+            if (keyParams[i].f.boolValue)
+                params[i] = keymaster_param_bool(tag);
+            else
+                params[i].tag = KM_TAG_INVALID;
+            break;
+        case KM_BIGNUM:
+        case KM_BYTES:
+            params[i] =
+                keymaster_param_blob(tag, &keyParams[i].blob[0], keyParams[i].blob.size());
+            break;
+        case KM_INVALID:
+        default:
+            params[i].tag = KM_TAG_INVALID;
+            /* just skip */
+            break;
+        }
+    }
+}
+
+KmParamSet::KmParamSet(KmParamSet &&other):
+    keymaster_key_param_set_t{other.params, other.length} {
+    other.length = 0;
+    other.params = nullptr;
+}
+
+KmParamSet::~KmParamSet() { delete[] params; }
+
+inline static KmParamSet hidlParams2KmParamSet(const hidl_vec<KeyParameter> &params) {
+    return KmParamSet(params);
+}
+
+inline static keymaster_blob_t hidlVec2KmBlob(const hidl_vec<uint8_t> &blob) {
+    if (blob.size())
+        return {&blob[0], blob.size()};
+    return {nullptr, 0};
+}
+
+inline static keymaster_key_blob_t hidlVec2KmKeyBlob(const hidl_vec<uint8_t> &blob) {
+    if (blob.size())
+        return {&blob[0], blob.size()};
+    return {nullptr, 0};
+}
+
+inline static hidl_vec<uint8_t> kmBlob2hidlVec(const keymaster_key_blob_t &blob) {
+    hidl_vec<uint8_t> result;
+    result.setToExternal(const_cast<unsigned char *>(blob.key_material), blob.key_material_size);
+    return result;
+}
+
+inline static hidl_vec<uint8_t> kmBlob2hidlVec(const keymaster_blob_t &blob) {
+    hidl_vec<uint8_t> result;
+    result.setToExternal(const_cast<unsigned char *>(blob.data), blob.data_length);
+    return result;
+}
+
+inline static hidl_vec<hidl_vec<uint8_t>> kmCertChain2Hidl(
+                const keymaster_cert_chain_t *cert_chain) {
+    hidl_vec<hidl_vec<uint8_t>> result;
+    if (!cert_chain || cert_chain->entry_count == 0 || !cert_chain->entries)
+        return result;
+
+    result.resize(cert_chain->entry_count);
+    for (size_t i = 0; i < cert_chain->entry_count; ++i)
+    {
+        auto &entry = cert_chain->entries[i];
+        result[i] = kmBlob2hidlVec(entry);
+    }
+
+    return result;
+}
+
+static inline hidl_vec<KeyParameter> kmParamSet2Hidl(const keymaster_key_param_set_t& set) {
+    hidl_vec<KeyParameter> result;
+    if (set.length == 0 || set.params == nullptr) return result;
+
+    result.resize(set.length);
+    keymaster_key_param_t* params = set.params;
+    for (size_t i = 0; i < set.length; ++i) {
+        auto tag = params[i].tag;
+      result[i].tag = legacy_enum_conversion(tag);
+      switch (typeFromTag(tag)) {
+      case KM_ENUM:
+      case KM_ENUM_REP:
+          result[i].f.integer = params[i].enumerated;
+          break;
+      case KM_UINT:
+      case KM_UINT_REP:
+          result[i].f.integer = params[i].integer;
+          break;
+      case KM_ULONG:
+      case KM_ULONG_REP:
+          result[i].f.longInteger = params[i].long_integer;
+          break;
+      case KM_DATE:
+          result[i].f.dateTime = params[i].date_time;
+          break;
+      case KM_BOOL:
+          result[i].f.boolValue = params[i].boolean;
+          break;
+      case KM_BIGNUM:
+      case KM_BYTES:
+          result[i].blob.setToExternal(const_cast<unsigned char*>(params[i].blob.data),
+                                       params[i].blob.data_length);
+          break;
+      case KM_INVALID:
+      default:
+          params[i].tag = KM_TAG_INVALID;
+          /* just skip */
+          break;
+      }
+  }
+    return result;
+}
+
+/*OpteeKeymasterDevice implementation*/
+
+OpteeKeymasterDevice::OpteeKeymasterDevice() {
+    connect();
+}
+
+OpteeKeymasterDevice::~OpteeKeymasterDevice() {
+    disconnect();
+}
+
+Return<void>  OpteeKeymasterDevice::getHardwareFeatures(getHardwareFeatures_cb _hidl_cb) {
+    //send results off to the client
+    _hidl_cb(is_secure_, supports_ec_, supports_symmetric_cryptography_,
+             supports_attestation_, supports_all_digests_,
+             name_, author_);
+    return Void();
+}
+
+Return<ErrorCode> OpteeKeymasterDevice::addRngEntropy(const hidl_vec<uint8_t> &data) {
+    ErrorCode rc = ErrorCode::OK;
+    int in_size = data.size() + sizeof(size_t);
+    uint8_t in[in_size];
+    /*Restrictions for max input data length 2KB*/
+    const uint32_t maxInputData = 1024 * 2;
+    if (!checkConnection(rc))
+        goto error;
+    if (!data.size())
+        goto out;
+    if (data.size() > maxInputData) {
+        rc = ErrorCode::INVALID_INPUT_LENGTH;
+        goto error;
+    }
+    memset(in, 0, in_size);
+    serializeData(in, data.size(), &data[0], sizeof(uint8_t));
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_ADD_RNG_ENTROPY, in, in_size, nullptr, 0));
+
+    if (rc != ErrorCode::OK)
+        ALOGE("Add RNG entropy failed with code %d [%x]", rc, rc);
+out:
+error:
+    return rc;
+}
+
+Return<void> OpteeKeymasterDevice::generateKey(const hidl_vec<KeyParameter> &keyParams,
+                                          generateKey_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    KeyCharacteristics resultCharacteristics;
+    hidl_vec<uint8_t> resultKeyBlob;
+    KmParamSet kmParams = hidlParams2KmParamSet(keyParams);
+    keymaster_key_blob_t kmKeyBlob{nullptr, 0};
+    keymaster_key_characteristics_t kmKeyCharacteristics{{nullptr, 0}, {nullptr, 0}};
+    uint32_t outSize = recv_buf_size_;
+    uint32_t inSize = getParamSetSize(kmParams);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    memset(out, 0, outSize);
+    memset(in, 0, inSize);
+    serializeParamSet(in, kmParams);
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_GENERATE_KEY, in,
+            inSize, out, outSize));
+    if (rc != ErrorCode::OK) {
+        ALOGE("Generate key failed with error code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    ptr = out;
+    ptr += deserializeKeyBlob(kmKeyBlob, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize key blob");
+        goto error;
+    }
+    ptr += deserializeKeyCharacteristics(kmKeyCharacteristics, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize characteristics");
+        goto error;
+    }
+
+    resultKeyBlob = kmBlob2hidlVec(kmKeyBlob);
+    resultCharacteristics.softwareEnforced = kmParamSet2Hidl(kmKeyCharacteristics.sw_enforced);
+    resultCharacteristics.teeEnforced = kmParamSet2Hidl(kmKeyCharacteristics.hw_enforced);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultKeyBlob, resultCharacteristics);
+    if (kmKeyBlob.key_material)
+        free(const_cast<uint8_t *>(kmKeyBlob.key_material));
+    keymaster_free_characteristics(&kmKeyCharacteristics);
+    return Void();
+}
+
+Return<void>  OpteeKeymasterDevice::getKeyCharacteristics(const hidl_vec<uint8_t> &keyBlob,
+                                   const hidl_vec<uint8_t> &clientId,
+                                   const hidl_vec<uint8_t> &appData,
+                                   getKeyCharacteristics_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    KeyCharacteristics resultCharacteristics;
+    keymaster_key_characteristics_t kmKeyCharacteristics{{nullptr, 0}, {nullptr, 0}};
+    keymaster_key_blob_t kmKeyBlob = hidlVec2KmKeyBlob(keyBlob);
+    keymaster_blob_t kmClientId = hidlVec2KmBlob(clientId);
+    keymaster_blob_t kmAppData = hidlVec2KmBlob(appData);
+    int outSize = recv_buf_size_;
+    int inSize = getKeyBlobSize(kmKeyBlob);
+    inSize += sizeof(presence);
+    if (clientId.size())
+        inSize += getBlobSize(kmClientId);
+    inSize += sizeof(presence);
+    if (appData.size())
+        inSize += getBlobSize(kmAppData);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    if (!keyBlob.size() || kmKeyBlob.key_material == nullptr) {
+        rc = ErrorCode::UNEXPECTED_NULL_POINTER;
+        goto error;
+    }
+    memset(out, 0, outSize);
+    memset(in, 0, inSize);
+    ptr = in;
+    ptr += serializeData(ptr, kmKeyBlob.key_material_size, kmKeyBlob.key_material,
+                     SIZE_OF_ITEM(kmKeyBlob.key_material));
+    ptr += serializeBlobWithPresenceInfo(ptr, kmClientId, clientId.size());
+    ptr += serializeBlobWithPresenceInfo(ptr, kmAppData, appData.size());
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_GET_KEY_CHARACTERISTICS, in,
+            inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Get key characteristics failed with code %d, [%x]", rc, rc);
+        goto error;
+    }
+
+    deserializeKeyCharacteristics(kmKeyCharacteristics, out, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize key characteristics");
+        goto error;
+    }
+
+    resultCharacteristics.softwareEnforced = kmParamSet2Hidl(kmKeyCharacteristics.sw_enforced);
+    resultCharacteristics.teeEnforced = kmParamSet2Hidl(kmKeyCharacteristics.hw_enforced);
+
+error:
+    // send results off to the client
+    _hidl_cb(rc, resultCharacteristics);
+    keymaster_free_characteristics(&kmKeyCharacteristics);
+    return Void();
+}
+
+Return<void>  OpteeKeymasterDevice::importKey(const hidl_vec<KeyParameter> &params, KeyFormat keyFormat,
+                       const hidl_vec<uint8_t> &keyData, importKey_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    KeyCharacteristics resultCharacteristics;
+    hidl_vec<uint8_t> resultKeyBlob;
+    keymaster_key_blob_t kmKeyBlob{nullptr, 0};
+    keymaster_key_characteristics_t kmKeyCharacteristics{{nullptr, 0}, {nullptr, 0}};
+    KmParamSet kmParams = hidlParams2KmParamSet(params);
+    keymaster_blob_t kmKeyData = hidlVec2KmBlob(keyData);
+    keymaster_key_format_t kmKeyFormat = legacy_enum_conversion(keyFormat);
+    int outSize = recv_buf_size_;
+    int inSize = getParamSetSize(kmParams) + SIZE_OF_ITEM(kmParams.params) +
+                    getBlobSize(kmKeyData);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    memset(in, 0, inSize);
+    memset(out, 0, outSize);
+    ptr = in;
+    ptr += serializeParamSet(ptr, kmParams);
+    ptr += serializeKeyFormat(ptr, kmKeyFormat);
+    ptr += serializeData(ptr, kmKeyData.data_length, kmKeyData.data,
+                                               SIZE_OF_ITEM(kmKeyData.data));
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_IMPORT_KEY, in, inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Import key failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    ptr = out;
+    ptr += deserializeKeyBlob(kmKeyBlob, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to allocate memory for blob deserialization");
+        goto error;
+    }
+    ptr += deserializeKeyCharacteristics(kmKeyCharacteristics, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to allocate memory for characteristics deserialization");
+        goto error;
+    }
+
+    resultKeyBlob = kmBlob2hidlVec(kmKeyBlob);
+    resultCharacteristics.softwareEnforced = kmParamSet2Hidl(kmKeyCharacteristics.sw_enforced);
+    resultCharacteristics.teeEnforced = kmParamSet2Hidl(kmKeyCharacteristics.hw_enforced);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultKeyBlob, resultCharacteristics);
+
+    if (kmKeyBlob.key_material)
+        free(const_cast<uint8_t *>(kmKeyBlob.key_material));
+    keymaster_free_characteristics(&kmKeyCharacteristics);
+
+    return Void();
+}
+
+Return<void>  OpteeKeymasterDevice::exportKey(KeyFormat exportFormat, const hidl_vec<uint8_t> &keyBlob,
+                       const hidl_vec<uint8_t> &clientId, const hidl_vec<uint8_t> &appData,
+                       exportKey_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    hidl_vec<uint8_t> resultKeyBlob;
+    keymaster_blob_t kmBlob{nullptr, 0};
+    keymaster_key_blob_t kmKeyBlob = hidlVec2KmKeyBlob(keyBlob);
+    keymaster_blob_t kmClientId = hidlVec2KmBlob(clientId);
+    keymaster_blob_t kmAppData = hidlVec2KmBlob(appData);
+    keymaster_key_format_t kmKeyFormat = legacy_enum_conversion(exportFormat);
+    int outSize = recv_buf_size_;
+    int inSize = getKeyBlobSize(kmKeyBlob);
+    if (!clientId.size())
+        inSize += getBlobSize(kmClientId);
+    inSize += sizeof(presence);
+    if (!appData.size())
+        inSize += getBlobSize(kmAppData);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    if (!keyBlob.size() || kmKeyBlob.key_material == nullptr) {
+        rc = ErrorCode::UNEXPECTED_NULL_POINTER;
+    }
+    memset(out, 0, outSize);
+    memset(in, 0, inSize);
+    ptr = in;
+    ptr += serializeKeyFormat(ptr, kmKeyFormat);
+    ptr += serializeData(ptr, kmKeyBlob.key_material_size,
+                     kmKeyBlob.key_material,
+                     SIZE_OF_ITEM(kmKeyBlob.key_material));
+    ptr += serializeBlobWithPresenceInfo(ptr, kmClientId, clientId.size());
+    ptr += serializeBlobWithPresenceInfo(ptr, kmAppData, appData.size());
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_EXPORT_KEY, in, inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Export key failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    deserializeBlob(kmBlob, out, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize blob from TA");
+        goto error;
+    }
+
+    resultKeyBlob = kmBlob2hidlVec(kmBlob);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultKeyBlob);
+
+    // free buffers that we are responsible for
+    if (kmBlob.data)
+        free(const_cast<uint8_t *>(kmBlob.data));
+
+    return Void();
+}
+
+Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAttest,
+                       const hidl_vec<KeyParameter> &attestParams,
+                       attestKey_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    hidl_vec<hidl_vec<uint8_t>> resultCertChain;
+    keymaster_cert_chain_t kmCertChain{nullptr, 0};
+    keymaster_key_blob_t kmKeyToAttest = hidlVec2KmKeyBlob(keyToAttest);
+    KmParamSet kmAttestParams = hidlParams2KmParamSet(attestParams);
+    int outSize = recv_buf_size_;
+    int inSize = getParamSetSize(kmAttestParams) + getKeyBlobSize(kmKeyToAttest);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *perm = nullptr;
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    memset(in, 0, inSize);
+    memset(out, 0, outSize);
+    for (size_t i = 0; i < attestParams.size(); ++i) {
+        switch (attestParams[i].tag) {
+        case Tag::ATTESTATION_ID_BRAND:
+        case Tag::ATTESTATION_ID_DEVICE:
+        case Tag::ATTESTATION_ID_PRODUCT:
+        case Tag::ATTESTATION_ID_SERIAL:
+        case Tag::ATTESTATION_ID_IMEI:
+        case Tag::ATTESTATION_ID_MEID:
+        case Tag::ATTESTATION_ID_MANUFACTURER:
+        case Tag::ATTESTATION_ID_MODEL:
+            // Device id attestation may only be supported if the device is able to permanently
+            // destroy its knowledge of the ids. This device is unable to do this, so it must
+            // never perform any device id attestation.
+            rc = ErrorCode::CANNOT_ATTEST_IDS;
+            goto error;
+        case Tag::ATTESTATION_APPLICATION_ID:
+            break;
+        default:
+            break;
+        }
+    }
+
+    ptr = in;
+    ptr += serializeData(ptr, kmKeyToAttest.key_material_size,
+                    kmKeyToAttest.key_material,
+                    SIZE_OF_ITEM(kmKeyToAttest.key_material));
+    ptr += serializeParamSet(ptr, kmAttestParams);
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_ATTEST_KEY, in, inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Attest key failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    ptr = out;
+    ptr += deserializeSize(kmCertChain.entry_count, ptr);
+    kmCertChain.entries = new (std::nothrow) keymaster_blob_t[kmCertChain.entry_count];
+    if (!kmCertChain.entries) {
+        ALOGE("Failed to allocate memory for cert chain");
+        rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+        goto error;
+    }
+    for(size_t i = 0; i < kmCertChain.entry_count; i++) {
+        ptr += deserializeSize(kmCertChain.entries[i].data_length, ptr);;
+        perm = new (std::nothrow) uint8_t[kmCertChain.entries[i].data_length];
+        if (!perm) {
+            ALOGE("Failed to allocate memory on certificate chain deserialization");
+            rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+            goto error;
+        }
+        memcpy(perm, ptr, kmCertChain.entries[i].data_length);
+        ptr += kmCertChain.entries[i].data_length;
+        kmCertChain.entries[i].data = perm;
+    }
+
+    resultCertChain = kmCertChain2Hidl(&kmCertChain);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultCertChain);
+
+    if (rc == ErrorCode::OK)
+        keymaster_free_cert_chain(&kmCertChain);
+
+    return Void();
+}
+
+Return<void>  OpteeKeymasterDevice::upgradeKey(const hidl_vec<uint8_t> &keyBlobToUpgrade,
+                        const hidl_vec<KeyParameter> &upgradeParams,
+                        upgradeKey_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    hidl_vec<uint8_t> resultKeyBlob;
+    keymaster_key_blob_t kmKeyBlob{nullptr, 0};
+    keymaster_key_blob_t kmKeyBlobToUpgrade = hidlVec2KmKeyBlob(keyBlobToUpgrade);
+    KmParamSet kmUpgradeParams = hidlParams2KmParamSet(upgradeParams);
+    int outSize = recv_buf_size_;
+    int inSize = getKeyBlobSize(kmKeyBlobToUpgrade) +
+                getParamSetSize(kmUpgradeParams);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    memset(out, 0, outSize);
+    memset(in, 0, inSize);
+    ptr = in;
+    ptr += serializeData(ptr, kmKeyBlobToUpgrade.key_material_size,
+                   kmKeyBlobToUpgrade.key_material,
+                   SIZE_OF_ITEM(kmKeyBlobToUpgrade.key_material));
+    ptr += serializeParamSet(ptr, kmUpgradeParams);
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_UPGRADE_KEY, in, inSize, out, outSize));
+    if (rc != ErrorCode::OK) {
+        ALOGE("Upgrade key failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    deserializeKeyBlob(kmKeyBlob, out, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize key blob");
+        goto error;
+    }
+
+    resultKeyBlob = kmBlob2hidlVec(kmKeyBlob);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultKeyBlob);
+
+    if (kmKeyBlob.key_material)
+        free(const_cast<uint8_t *>(kmKeyBlob.key_material));
+
+    return Void();
+}
+
+Return<ErrorCode>  OpteeKeymasterDevice::deleteKey(const hidl_vec<uint8_t> &keyBlob) {
+    ErrorCode rc = ErrorCode::OK;
+    keymaster_key_blob_t kmKeyBlob = hidlVec2KmKeyBlob(keyBlob);
+    int inSize = getKeyBlobSize(kmKeyBlob);
+    uint8_t in[inSize];
+    if (!checkConnection(rc))
+        goto error;
+    memset(in, 0, inSize);
+    serializeData(in, kmKeyBlob.key_material_size, kmKeyBlob.key_material,
+                        SIZE_OF_ITEM(kmKeyBlob.key_material));
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_DELETE_KEY, in, inSize, nullptr, 0));
+
+    /*
+     * Keymaster 3.0 requires deleteKey to return ErrorCode::OK if the key
+     * blob is unusable after the call. This is equally true if the key blob was
+     * unusable before.
+     */
+    if (rc == ErrorCode::INVALID_KEY_BLOB)
+        rc = ErrorCode::OK;
+
+    if (rc != ErrorCode::OK)
+        ALOGE("Attest key failed with code %d [%x]", rc, rc);
+error:
+    return rc;
+}
+
+Return<ErrorCode> OpteeKeymasterDevice::deleteAllKeys() {
+    ErrorCode rc = ErrorCode::OK;
+    if (!checkConnection(rc))
+        goto error;
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_DELETE_ALL_KEYS, nullptr, 0, nullptr, 0));
+    if (rc != ErrorCode::OK)
+        ALOGE("Delete all keys failed with code %d [%x]", rc, rc);
+error:
+    return rc;
+}
+
+Return<ErrorCode> OpteeKeymasterDevice::destroyAttestationIds() {
+    ErrorCode rc = ErrorCode::OK;
+    if (!checkConnection(rc))
+        return rc;
+    return ErrorCode::UNIMPLEMENTED;
+}
+
+Return<void> OpteeKeymasterDevice::begin(KeyPurpose purpose, const hidl_vec<uint8_t> &key,
+                   const hidl_vec<KeyParameter> &inParams, begin_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    hidl_vec<KeyParameter> resultParams;
+    uint64_t resultOpHandle = 0;
+    KmParamSet kmOutParams;
+    KmParamSet kmInParams = hidlParams2KmParamSet(inParams);
+    keymaster_key_blob_t kmKey = hidlVec2KmKeyBlob(key);
+    keymaster_purpose_t kmPurpose = legacy_enum_conversion(purpose);
+    int outSize = recv_buf_size_;
+    int inSize = sizeof(purpose) + getKeyBlobSize(kmKey) +
+        sizeof(presence) + getParamSetSize(kmInParams);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    if (kmKey.key_material == nullptr) {
+        rc = ErrorCode::UNEXPECTED_NULL_POINTER;
+        goto error;
+    }
+    memset(out, 0, outSize);
+    memset(in, 0, inSize);
+    ptr = in;
+    memcpy(ptr, &kmPurpose, sizeof(kmPurpose));
+    ptr += sizeof(kmPurpose);
+    ptr += serializeData(ptr, kmKey.key_material_size, kmKey.key_material,
+        SIZE_OF_ITEM(kmKey.key_material));
+    ptr += serializeParamSetWithPresence(ptr, kmInParams);
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_BEGIN, in, inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Begin failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    ptr = out;
+    ptr += deserializeParamSet(kmOutParams, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize param set from TA");
+        goto error;
+    }
+    memcpy(&resultOpHandle, ptr, sizeof(resultOpHandle));
+
+    resultParams = kmParamSet2Hidl(kmOutParams);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultParams, resultOpHandle);
+
+    keymaster_free_param_set(&kmOutParams);
+
+    return Void();
+}
+
+Return<void> OpteeKeymasterDevice::update(uint64_t operationHandle, const hidl_vec<KeyParameter> &inParams,
+                    const hidl_vec<uint8_t> &input, update_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    uint32_t resultConsumed = 0;
+    hidl_vec<KeyParameter> resultParams;
+    hidl_vec<uint8_t> resultBlob;
+    size_t consumed = 0;
+    KmParamSet kmOutParams;
+    KmParamSet kmInParams = hidlParams2KmParamSet(inParams);
+    keymaster_blob_t kmOutBlob{nullptr, 0};
+    keymaster_blob_t kmInputBlob = hidlVec2KmBlob(input);
+    int outSize = recv_buf_size_;
+    int inSize = sizeof(operationHandle) + getBlobSize(kmInputBlob) +
+            sizeof(presence) + getParamSetSize(kmInParams);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    memset(out, 0, outSize);
+    memset(in, 0, inSize);
+    ptr = in;
+    ptr += serializeSize(ptr, operationHandle);
+    ptr += serializeParamSetWithPresence(ptr, kmInParams);
+    ptr += serializeData(ptr, kmInputBlob.data_length, kmInputBlob.data,
+                        SIZE_OF_ITEM(kmInputBlob.data));
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_UPDATE, in, inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Update failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    ptr = out;
+    memcpy(&consumed, ptr, sizeof(consumed));
+    ptr += sizeof(consumed);
+    ptr += deserializeBlob(kmOutBlob, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize blob from TA");
+        goto error;
+    }
+    ptr += deserializeParamSet(kmOutParams, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize param set from TA");
+        goto error;
+    }
+
+    resultConsumed = consumed;
+    resultParams = kmParamSet2Hidl(kmOutParams);
+    resultBlob = kmBlob2hidlVec(kmOutBlob);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultConsumed, resultParams, resultBlob);
+
+    keymaster_free_param_set(&kmOutParams);
+    if (kmOutBlob.data)
+        free(const_cast<uint8_t *>(kmOutBlob.data));
+
+    return Void();
+}
+
+Return<void>  OpteeKeymasterDevice::finish(uint64_t operationHandle, const hidl_vec<KeyParameter> &inParams,
+                    const hidl_vec<uint8_t> &input, const hidl_vec<uint8_t> &signature,
+                    finish_cb _hidl_cb) {
+    ErrorCode rc = ErrorCode::OK;
+    hidl_vec<KeyParameter> resultParams;
+    hidl_vec<uint8_t> resultBlob;
+    KmParamSet kmOutParams;
+    KmParamSet kmInParams = hidlParams2KmParamSet(inParams);
+    keymaster_blob_t kmOutBlob{nullptr, 0};
+    keymaster_blob_t kmInput = hidlVec2KmBlob(input);
+    keymaster_blob_t kmSignature = hidlVec2KmBlob(signature);
+    int outSize = recv_buf_size_;
+    int inSize = sizeof(operationHandle) +
+            sizeof(presence) + getBlobSize(kmSignature) +
+            sizeof(presence) + getBlobSize(kmInput) +
+            sizeof(presence) + getParamSetSize(kmInParams);
+    uint8_t out[outSize];
+    uint8_t in[inSize];
+    uint8_t *ptr = nullptr;
+    if (!checkConnection(rc))
+        goto error;
+    ptr = in;
+    memcpy(ptr, &operationHandle, sizeof(operationHandle));
+    ptr += sizeof(operationHandle);
+    ptr += serializeParamSetWithPresence(ptr, kmInParams);
+    ptr += serializeBlobWithPresenceInfo(ptr, kmInput, true);
+    ptr += serializeBlobWithPresenceInfo(ptr, kmSignature, true);
+
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_FINISH, in, inSize, out, outSize));
+
+    if (rc != ErrorCode::OK) {
+        ALOGE("Finish failed with code %d [%x]", rc, rc);
+        goto error;
+    }
+
+    ptr = out;
+    ptr += deserializeParamSet(kmOutParams, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed deserialize param set from TA");
+        goto error;
+    }
+    ptr += deserializeBlob(kmOutBlob, ptr, rc);
+    if (rc != ErrorCode::OK) {
+        ALOGE("Failed to deserialize blob from TA");
+        goto error;
+    }
+
+    resultParams = kmParamSet2Hidl(kmOutParams);
+    resultBlob = kmBlob2hidlVec(kmOutBlob);
+
+error:
+    //send results off to the client
+    _hidl_cb(rc, resultParams, resultBlob);
+
+    keymaster_free_param_set(&kmOutParams);
+    if (kmOutBlob.data)
+        free(const_cast<uint8_t *>(kmOutBlob.data));
+
+    return Void();
+}
+
+Return<ErrorCode>  OpteeKeymasterDevice::abort(uint64_t operationHandle) {
+    ErrorCode rc = ErrorCode::OK;
+    int inSize = sizeof(operationHandle);
+    uint8_t in[inSize];
+    if (!checkConnection(rc))
+        goto error;
+    memset(in, 0, inSize);
+    memcpy(in, &operationHandle, sizeof(operationHandle));
+    rc = legacy_enum_conversion(
+        optee_keystore_call(KM_ABORT, in, inSize, nullptr, 0));
+
+    if (rc != ErrorCode::OK)
+        ALOGE("Abort failed with code %d [%x]", rc, rc);
+
+error:
+    return rc;
+}
+
+bool OpteeKeymasterDevice::connect() {
+    if (is_connected_) {
         ALOGE("Keymaster device is already connected");
         return false;
     }
@@ -74,933 +873,264 @@ bool OpteeKeymasterDevice::connect(void) {
         ALOGE("Fail to load Keystore TA");
         return false;
     }
-    connected = true;
+    is_connected_ = true;
     ALOGV("Keymaster connected");
     return true;
 }
 
-void OpteeKeymasterDevice::disconnect(void) {
-    if (connected) {
+void OpteeKeymasterDevice::disconnect() {
+    if (is_connected_) {
         optee_keystore_disconnect();
-        connected = false;
+        is_connected_ = false;
+        ALOGV("Keymaster has been disconnected");
     }
-    ALOGV("Keymaster has been disconnected");
+    else {
+        ALOGE("Keymaster allready disconnected");
+    }
 }
 
-hw_device_t* OpteeKeymasterDevice::hw_device(void) {
-    return &device_.common;
+bool OpteeKeymasterDevice::checkConnection(ErrorCode &rc) {
+    if (!is_connected_) {
+        ALOGE("Keymaster is not connected");
+        rc = ErrorCode::SECURE_HW_COMMUNICATION_FAILED;
+    }
+    return is_connected_;
 }
 
-int OpteeKeymasterDevice::close_device(hw_device_t* dev) {
-    delete reinterpret_cast<OpteeKeymasterDevice*>(dev);
-    return 0;
-}
-
-OpteeKeymasterDevice::~OpteeKeymasterDevice() {
-    disconnect();
-}
-
-int OpteeKeymasterDevice::serialize(uint8_t* ptr, const size_t count,
-                                    const uint8_t* source,
-                                    const uint32_t str_size) {
-    memcpy(ptr, &count, sizeof(count));
-    ptr += SIZE_LENGTH;
-    memcpy(ptr, source, str_size * count);
-    return SIZE_LENGTH + count * str_size;
-}
-
-int OpteeKeymasterDevice::serializeParams(uint8_t* ptr,
-                        const keymaster_key_param_set_t* params) {
-    uint8_t* start = ptr;
-    memcpy(ptr, &params->length, sizeof(params->length));
-    ptr += SIZE_LENGTH;
-    for (size_t i = 0; i < params->length; i++) {
-        memcpy(ptr, params->params + i, SIZE_OF_ITEM(params->params));
-        ptr += SIZE_OF_ITEM(params->params);
-        if (keymaster_tag_get_type((params->params + i)->tag) == KM_BIGNUM ||
-                keymaster_tag_get_type((params->params + i)->tag) == KM_BYTES) {
-            ptr += serialize(ptr, params->params[i].blob.data_length,
-                     params->params[i].blob.data,
-                     SIZE_OF_ITEM(params->params[i].blob.data));
-        }
-    }
-    return ptr - start;
-}
-
-int OpteeKeymasterDevice::serializePresence(uint8_t* ptr, const presence p) {
-    memcpy(ptr, &p, sizeof(presence));
-    return sizeof(presence);
-}
-
-keymaster_error_t OpteeKeymasterDevice::Configure(
-            const keymaster_key_param_set_t* params) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    int in_size = PARAM_SET_SIZE(params);
-    uint8_t in[in_size];
-    memset(in, 0, in_size);
-    serializeParams(in, params);
-    keymaster_error_t res = optee_keystore_call(KM_CONFIGURE,
-                                                    in, in_size, nullptr, 0);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Configure failed with code %d", res);
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Add_rng_entropy(const uint8_t* data,
-                                                size_t data_length) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    int in_size = 0;
-    keymaster_error_t res = KM_ERROR_OK;
-    if (!data)
-        in_size = 0;
-    else
-        in_size = data_length * SIZE_OF_ITEM(data) + SIZE_LENGTH;
-    uint8_t in[in_size];
-    memset(in, 0, in_size);
-    serialize(in, data_length, data, SIZE_OF_ITEM(data));
-    res = optee_keystore_call(KM_ADD_RNG_ENTROPY, in, in_size, nullptr, 0);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Add RNG entropy failed with code %d", res);
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Generate_key(
-                              const keymaster_key_param_set_t* params,
-                              keymaster_key_blob_t* key_blob,
-                              keymaster_key_characteristics_t* characteristics) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    keymaster_error_t res = KM_ERROR_OK;
-    int in_size = PARAM_SET_SIZE(params);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    serializeParams(in, params);
-
-    res = optee_keystore_call(KM_GENERATE_KEY, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Generate key failed with code %d", res);
-        return res;
-    }
-
-    ptr = out;
-    ptr += deserialize_key_blob(ptr, key_blob, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize key blob");
-        return res;
-    }
-    ptr += deserialize_characteristics(ptr, characteristics, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize characteristics");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Get_key_characteristics(
-                          const keymaster_key_blob_t* key_blob,
-                          const keymaster_blob_t* client_id,
-                          const keymaster_blob_t* app_data,
-                          keymaster_key_characteristics_t* characteristics) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = KEY_BLOB_SIZE(key_blob);
-    in_size += sizeof(presence);/* place to mark presence of client_id */
-    if (client_id)
-        in_size += BLOB_SIZE(client_id);
-    in_size += sizeof(presence);/* place to mark presence of app_data */
-    if (app_data)
-        in_size += BLOB_SIZE(app_data);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    ptr += serialize(ptr, key_blob->key_material_size, key_blob->key_material,
-                     SIZE_OF_ITEM(key_blob->key_material));
-    ptr += check_and_push_blob(ptr, client_id);
-    ptr += check_and_push_blob(ptr, app_data);
-
-    res = optee_keystore_call(KM_GET_KEY_CHARACTERISTICS, in,
-                                               in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Get key characteristics failed with code %d", res);
-        return res;
-    }
-
-    deserialize_characteristics(out, characteristics, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize characteristics");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Import_key(
-                            const keymaster_key_param_set_t* params,
-                             keymaster_key_format_t key_format,
-                             const keymaster_blob_t* key_data,
-                             keymaster_key_blob_t* key_blob,
-                             keymaster_key_characteristics_t* characteristics) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = PARAM_SET_SIZE(params) + SIZE_OF_ITEM(params->params) +
-        BLOB_SIZE(key_data);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    ptr += serializeParams(ptr, params);
-    memcpy(ptr, &key_format, sizeof(key_format));
-    ptr += sizeof(key_format);
-    ptr += serialize(ptr, key_data->data_length, key_data->data,
-                                               SIZE_OF_ITEM(key_data->data));
-
-    res = optee_keystore_call(KM_IMPORT_KEY, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Import key failed with code %d", res);
-        return res;
-    }
-
-    ptr = out;
-    ptr += deserialize_key_blob(ptr, key_blob, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to allocate memory on blob deserialization");
-        return res;
-    }
-    ptr += deserialize_characteristics(ptr, characteristics, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to allocate memory on characteristics deserialization");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Export_key(
-                                keymaster_key_format_t export_format,
-                                const keymaster_key_blob_t* key_to_export,
-                                const keymaster_blob_t* client_id,
-                                const keymaster_blob_t* app_data,
-                                keymaster_blob_t* export_data) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = KEY_BLOB_SIZE(key_to_export) + sizeof(export_format);
-    in_size += sizeof(presence);/* place to mark presence of client_id */
-    if (client_id)
-        in_size += BLOB_SIZE(client_id);
-    in_size += sizeof(presence);/* place to mark presence of app_data */
-    if (app_data)
-        in_size += BLOB_SIZE(app_data);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    memcpy(ptr, &export_format, sizeof(export_format));
-    ptr += sizeof(export_format);
-    ptr += serialize(ptr, key_to_export->key_material_size,
-                     key_to_export->key_material,
-                     SIZE_OF_ITEM(key_to_export->key_material));
-    ptr += check_and_push_blob(ptr, client_id);
-    ptr += check_and_push_blob(ptr, app_data);
-
-    res = optee_keystore_call(KM_EXPORT_KEY, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Export key failed with code %d", res);
-        return res;
-    }
-
-    deserialize_blob(out, export_data, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize blob from TA");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Attest_key(
-                                const keymaster_key_blob_t* key_to_attest,
-                                const keymaster_key_param_set_t* attest_params,
-                                keymaster_cert_chain_t* cert_chain) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    uint8_t* perm;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = PARAM_SET_SIZE(attest_params) + KEY_BLOB_SIZE(key_to_attest);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    ptr += serialize(ptr, key_to_attest->key_material_size,
-                     key_to_attest->key_material,
-                     SIZE_OF_ITEM(key_to_attest->key_material));
-    ptr += serializeParams(ptr, attest_params);
-
-    res = optee_keystore_call(KM_ATTEST_KEY, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Attest key failed with code %d", res);
-        return res;
-    }
-
-    ptr = out;
-    memcpy(&cert_chain->entry_count, ptr, sizeof(cert_chain->entry_count));
-    ptr += SIZE_LENGTH;
-    cert_chain->entries = new keymaster_blob_t[cert_chain->entry_count];
-    if (!cert_chain->entries) {
-        ALOGE("Failed to allocate memory for cert chain");
-        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
-    }
-    for(size_t i = 0; i < cert_chain->entry_count; i++) {
-        memcpy(&(cert_chain->entries[i].data_length), ptr,
-                       sizeof(cert_chain->entries[i].data_length));
-        ptr += SIZE_LENGTH;
-        perm = new uint8_t[cert_chain->entries[i].data_length];
-        if (!perm) {
-            ALOGE("Failed to allocate memory on certificate chain deserialization");
-            return KM_ERROR_MEMORY_ALLOCATION_FAILED;
-        }
-        memcpy(perm, ptr, cert_chain->entries[i].data_length);
-        ptr += cert_chain->entries[i].data_length;
-        cert_chain->entries[i].data = perm;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Upgrade_key(
-                               const keymaster_key_blob_t* key_to_upgrade,
-                               const keymaster_key_param_set_t* upgrade_params,
-                               keymaster_key_blob_t* upgraded_key) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = KEY_BLOB_SIZE(key_to_upgrade) +
-                                       PARAM_SET_SIZE(upgrade_params);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    ptr += serialize(ptr, key_to_upgrade->key_material_size,
-                   key_to_upgrade->key_material,
-                   SIZE_OF_ITEM(key_to_upgrade->key_material));
-    ptr += serializeParams(ptr, upgrade_params);
-
-    res = optee_keystore_call(KM_UPGRADE_KEY, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Upgrade key failed with code %d", res);
-        return res;
-    }
-
-    deserialize_key_blob(out, upgraded_key, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize key blob");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Delete_key(const keymaster_key_blob_t* key) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    int in_size = KEY_BLOB_SIZE(key);
-    uint8_t in[in_size];
-    memset(in, 0, in_size);
-    serialize(in, key->key_material_size, key->key_material,
-                                               SIZE_OF_ITEM(key->key_material));
-
-    res = optee_keystore_call(KM_DELETE_KEY, in, in_size, nullptr, 0);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Attest key failed with code %d", res);
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Delete_all_keys() {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = optee_keystore_call(
-                                KM_DELETE_ALL_KEYS, nullptr, 0, nullptr, 0);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Delete all keys failed with code %d", res);
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Begin(keymaster_purpose_t purpose,
-                            const keymaster_key_blob_t* key,
-                            const keymaster_key_param_set_t* in_params,
-                            keymaster_key_param_set_t* out_params,
-                            keymaster_operation_handle_t* operation_handle) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = sizeof(purpose) + KEY_BLOB_SIZE(key);
-    in_size += sizeof(presence);/* place to mark presence of in_params */
-    if (in_params)
-        in_size += PARAM_SET_SIZE(in_params);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    memcpy(ptr, &purpose, sizeof(purpose));
-    ptr += sizeof(purpose);
-    ptr += serialize(ptr, key->key_material_size, key->key_material,
-                                               SIZE_OF_ITEM(key->key_material));
-    ptr += check_and_push_params(ptr, in_params);
-
-    res = optee_keystore_call(KM_BEGIN, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Begin failed with code %d", res);
-        return res;
-    }
-
-    ptr = out;
-    ptr += deserialize_param_set(ptr, out_params, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserailize param set from TA");
-        return res;
-    }
-    memcpy(operation_handle, ptr, sizeof(*operation_handle));
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Update(
-             keymaster_operation_handle_t operation_handle,
-             const keymaster_key_param_set_t* in_params,
-             const keymaster_blob_t* input, size_t* input_consumed,
-             keymaster_key_param_set_t* out_params, keymaster_blob_t* output) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = sizeof(operation_handle) + BLOB_SIZE(input);
-    in_size += sizeof(presence);/* place to mark presence of in_params */
-    if (in_params)
-        in_size += PARAM_SET_SIZE(in_params);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    memcpy(ptr, &operation_handle, sizeof(operation_handle));
-    ptr += sizeof(operation_handle);
-    ptr += check_and_push_params(ptr, in_params);
-    ptr += serialize(ptr, input->data_length, input->data,
-                                               SIZE_OF_ITEM(input->data));
-
-    res = optee_keystore_call(KM_UPDATE, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Update failed with code %d", res);
-        return res;
-    }
-
-    ptr = out;
-    memcpy(input_consumed, ptr, sizeof(*input_consumed));
-    ptr += SIZE_LENGTH;
-    ptr += deserialize_blob(ptr, output, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize blob from TA");
-        return res;
-    }
-    ptr += deserialize_param_set(ptr, out_params, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize param set from TA");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Finish(
-            keymaster_operation_handle_t operation_handle,
-            const keymaster_key_param_set_t* in_params,
-            const keymaster_blob_t* input, const keymaster_blob_t* signature,
-            keymaster_key_param_set_t* out_params, keymaster_blob_t* output) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    uint8_t* ptr;
-    int out_size = RECV_BUF_SIZE;
-    int in_size = sizeof(operation_handle);
-    in_size += sizeof(presence);/* place to mark presence of signature */
-    if (signature)
-        in_size += BLOB_SIZE(signature);
-    in_size += sizeof(presence);/* place to mark presence of input */
-    if (input)
-        in_size += BLOB_SIZE(input);
-    in_size += sizeof(presence);/* place to mark presence of in_params */
-    if (in_params)
-        in_size += PARAM_SET_SIZE(in_params);
-    uint8_t in[in_size];
-    uint8_t out[out_size];
-    memset(in, 0, in_size);
-    memset(out, 0, out_size);
-    ptr = in;
-    memcpy(ptr, &operation_handle, sizeof(operation_handle));
-    ptr += sizeof(operation_handle);
-    ptr += check_and_push_params(ptr, in_params);
-    ptr += check_and_push_blob(ptr, input);
-    ptr += check_and_push_blob(ptr, signature);
-
-    res = optee_keystore_call(KM_FINISH, in, in_size, out, out_size);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Finish failed with code %d", res);
-        return res;
-    }
-
-    ptr = out;
-    ptr += deserialize_param_set(ptr, out_params, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed deserialize param set from TA");
-        return res;
-    }
-    ptr += deserialize_blob(ptr, output, &res);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Failed to deserialize blob from TA");
-        return res;
-    }
-    return res;
-}
-
-keymaster_error_t OpteeKeymasterDevice::Abort(
-                        keymaster_operation_handle_t operation_handle) {
-    if (!connected) {
-        return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
-    }
-    keymaster_error_t res = KM_ERROR_OK;
-    int in_size = sizeof(operation_handle);
-    uint8_t in[in_size];
-    memset(in, 0, in_size);
-    memcpy(in, &operation_handle, sizeof(operation_handle));
-    res = optee_keystore_call(KM_ABORT, in, in_size, nullptr, 0);
-    if (res != KM_ERROR_OK) {
-        ALOGE("Abort failed with code %d", res);
-    }
-    return res;
-}
-
-static inline OpteeKeymasterDevice* convert_device(
-                                            const keymaster2_device* dev) {
-    return reinterpret_cast<OpteeKeymasterDevice*>(const_cast<keymaster2_device*>(dev));
-}
-
-keymaster_error_t OpteeKeymasterDevice::configure(
-                                const struct keymaster2_device* dev,
-                                const keymaster_key_param_set_t* params) {
-    if (dev == nullptr || params == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    return convert_device(dev)->Configure(params);
-}
-
-keymaster_error_t OpteeKeymasterDevice::add_rng_entropy(
-                                     const struct keymaster2_device* dev,
-                                     const uint8_t* data, size_t data_length) {
-    if (dev == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    return convert_device(dev)->Add_rng_entropy(data, data_length);
-}
-
-keymaster_error_t OpteeKeymasterDevice::generate_key(
-                         const struct keymaster2_device* dev,
-                         const keymaster_key_param_set_t* params,
-                         keymaster_key_blob_t* key_blob,
-                         keymaster_key_characteristics_t* characteristics) {
-    if (dev == nullptr || params == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (key_blob == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Generate_key(params,
-                                             key_blob, characteristics);
-}
-
-keymaster_error_t OpteeKeymasterDevice::get_key_characteristics(
-                            const struct keymaster2_device* dev,
-                            const keymaster_key_blob_t* key_blob,
-                            const keymaster_blob_t* client_id,
-                            const keymaster_blob_t* app_data,
-                            keymaster_key_characteristics_t* characteristics) {
-    if (dev == nullptr || key_blob == nullptr || key_blob->key_material == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (characteristics == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Get_key_characteristics(key_blob,client_id,
-                                                app_data, characteristics);
-}
-
-keymaster_error_t OpteeKeymasterDevice::import_key(
-                            const struct keymaster2_device* dev,
-                            const keymaster_key_param_set_t* params,
-                            keymaster_key_format_t key_format,
-                            const keymaster_blob_t* key_data,
-                            keymaster_key_blob_t* key_blob,
-                            keymaster_key_characteristics_t* characteristics) {
-    if (dev == nullptr || params == nullptr || key_data == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (key_blob == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Import_key(params, key_format, key_data,
-                                           key_blob, characteristics);
-}
-
-keymaster_error_t OpteeKeymasterDevice::export_key(
-                                    const struct keymaster2_device* dev,
-                                    keymaster_key_format_t export_format,
-                                    const keymaster_key_blob_t* key_to_export,
-                                    const keymaster_blob_t* client_id,
-                                    const keymaster_blob_t* app_data,
-                                    keymaster_blob_t* export_data) {
-    if (dev == nullptr || key_to_export == nullptr ||
-        key_to_export->key_material == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (export_data == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Export_key(export_format, key_to_export,
-                                         client_id, app_data, export_data);
-}
-
-keymaster_error_t OpteeKeymasterDevice::attest_key(
-                               const struct keymaster2_device* dev,
-                               const keymaster_key_blob_t* key_to_attest,
-                               const keymaster_key_param_set_t* attest_params,
-                               keymaster_cert_chain_t* cert_chain) {
-    if (dev == nullptr || key_to_attest == nullptr || attest_params == nullptr
-        || cert_chain == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    return convert_device(dev)->Attest_key(key_to_attest,
-                                           attest_params, cert_chain);
-}
-
-keymaster_error_t OpteeKeymasterDevice::upgrade_key(
-                              const struct keymaster2_device* dev,
-                              const keymaster_key_blob_t* key_to_upgrade,
-                              const keymaster_key_param_set_t* upgrade_params,
-                              keymaster_key_blob_t* upgraded_key) {
-    if (dev == nullptr || key_to_upgrade == nullptr || upgrade_params == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (upgraded_key == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Upgrade_key(key_to_upgrade,
-                                            upgrade_params, upgraded_key);
-}
-
-keymaster_error_t OpteeKeymasterDevice::delete_key(
-                                        const struct keymaster2_device* dev,
-                                        const keymaster_key_blob_t* key) {
-    if (dev == nullptr || key == nullptr || key->key_material == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    return convert_device(dev)->Delete_key(key);
-}
-
-keymaster_error_t OpteeKeymasterDevice::delete_all_keys(
-                                    const struct keymaster2_device* dev) {
-    if (dev == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    return convert_device(dev)->Delete_all_keys();
-}
-
-keymaster_error_t OpteeKeymasterDevice::begin(
-                            const struct keymaster2_device* dev,
-                            keymaster_purpose_t purpose,
-                            const keymaster_key_blob_t* key,
-                            const keymaster_key_param_set_t* in_params,
-                            keymaster_key_param_set_t* out_params,
-                            keymaster_operation_handle_t* operation_handle) {
-    if (dev == nullptr || key == nullptr || key->key_material == NULL) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (operation_handle == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Begin(purpose, key, in_params,
-                                      out_params, operation_handle);
-}
-
-keymaster_error_t OpteeKeymasterDevice::update(
-            const struct keymaster2_device* dev,
-            keymaster_operation_handle_t operation_handle,
-            const keymaster_key_param_set_t* in_params,
-            const keymaster_blob_t* input, size_t* input_consumed,
-            keymaster_key_param_set_t* out_params, keymaster_blob_t* output) {
-    if (dev == nullptr || input == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    if (input_consumed == nullptr) {
-        return KM_ERROR_OUTPUT_PARAMETER_NULL;
-    }
-    return convert_device(dev)->Update(operation_handle, in_params, input,
-                                       input_consumed, out_params, output);
-}
-
-keymaster_error_t OpteeKeymasterDevice::finish(
-             const struct keymaster2_device* dev,
-             keymaster_operation_handle_t operation_handle,
-             const keymaster_key_param_set_t* in_params,
-             const keymaster_blob_t* input, const keymaster_blob_t* signature,
-             keymaster_key_param_set_t* out_params, keymaster_blob_t* output) {
-    if (dev == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-
-    return convert_device(dev)->Finish(operation_handle, in_params,
-                                       input, signature, out_params, output);
-}
-
-keymaster_error_t OpteeKeymasterDevice::abort(const struct keymaster2_device* dev,
-                                keymaster_operation_handle_t operation_handle) {
-    if (dev == nullptr) {
-        return KM_ERROR_UNEXPECTED_NULL_POINTER;
-    }
-    return convert_device(dev)->Abort(operation_handle);
-}
-
-int OpteeKeymasterDevice::deserialize_key_blob(const uint8_t* out,
-                                keymaster_key_blob_t* const key_blob,
-                                keymaster_error_t* const res) {
-    size_t size;
-    uint8_t* material;
-    const uint8_t* start = out;
-
-    *res = KM_ERROR_OK;
-    memcpy(&size, out, sizeof(size));
-    out += SIZE_LENGTH;
-    if (size > 0 && !key_blob) {
-        ALOGE("Key blob deserialization can not be done, pointer is nullptr");
-        *res = KM_ERROR_OUTPUT_PARAMETER_NULL;
-        return out - start;
-    }
-    if (!key_blob)
-        return out - start;
-    key_blob->key_material_size = size;
-    material = new uint8_t[key_blob->key_material_size];
-    if (!material) {
-        *res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-        return out - start;
-    }
-    memcpy(material, out, key_blob->key_material_size);
-    out += key_blob->key_material_size;
-    key_blob->key_material = material;
-    return out - start;
-}
-
-int OpteeKeymasterDevice::deserialize_characteristics(const uint8_t* out,
-                        keymaster_key_characteristics_t* const characteristics,
-                        keymaster_error_t* const res) {
-    size_t size;
-    const uint8_t* start = out;
-
-    *res = KM_ERROR_OK;
-    memcpy(&size, out, sizeof(size));
-    out += SIZE_LENGTH;
-    if (size > 0 && !characteristics) {
-        ALOGE("Characteristics deserialization can not be done, pointer is nullptr");
-        *res = KM_ERROR_OUTPUT_PARAMETER_NULL;
-        return out - start;
-    }
-    if (!characteristics)
-        return out - start;
-    characteristics->hw_enforced.length = size;
-    characteristics->hw_enforced.params =
-               new keymaster_key_param_t[characteristics->hw_enforced.length];
-    if (!characteristics->hw_enforced.params) {
-        *res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-        return out - start;
-    }
-    for (size_t i = 0; i < characteristics->hw_enforced.length; i++) {
-        memcpy(characteristics->hw_enforced.params + i,
-               out, SIZE_OF_ITEM(characteristics->hw_enforced.params));
-        out += SIZE_OF_ITEM(characteristics->hw_enforced.params);
-        if (keymaster_tag_get_type(
-             characteristics->hw_enforced.params[i].tag) == KM_BIGNUM ||
-             keymaster_tag_get_type(characteristics->hw_enforced.params[i].tag)
-             == KM_BYTES) {
-            out += deserialize_blob(out,
-                        &(characteristics->hw_enforced.params[i].blob), res);
-        }
-    }
-    memcpy(&characteristics->sw_enforced.length, out,
-                       sizeof(characteristics->sw_enforced.length));
-    out += SIZE_LENGTH;
-    characteristics->sw_enforced.params =
-               new keymaster_key_param_t[characteristics->sw_enforced.length];
-    if (!characteristics->sw_enforced.params) {
-        *res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-        return out - start;
-    }
-    for (size_t i = 0; i < characteristics->sw_enforced.length; i++) {
-        memcpy(characteristics->sw_enforced.params + i, out,
-               SIZE_OF_ITEM(characteristics->sw_enforced.params));
-        out += SIZE_OF_ITEM(characteristics->sw_enforced.params);
-        if (keymaster_tag_get_type(
-             characteristics->sw_enforced.params[i].tag) == KM_BIGNUM ||
-             keymaster_tag_get_type(characteristics->sw_enforced.params[i].tag)
-             == KM_BYTES) {
-            out += deserialize_blob(out,
-                        &(characteristics->sw_enforced.params[i].blob), res);
-        }
-    }
-    return out - start;
-}
-
-int OpteeKeymasterDevice::deserialize_blob(const uint8_t* out,
-                            keymaster_blob_t* const blob,
-                            keymaster_error_t* const res) {
-    size_t size;
-    uint8_t* data;
-    const uint8_t* start = out;
-
-    *res = KM_ERROR_OK;
-    memcpy(&size, out, sizeof(size));
-    out += SIZE_LENGTH;
-    if (size > 0 && !blob) {
-        ALOGE("Blob deserialization can not be done, pointer is nullptr");
-        *res = KM_ERROR_OUTPUT_PARAMETER_NULL;
-        return out - start;
-    }
-    if (!blob)
-        return out - start;
-    blob->data_length = size;
-    data = new uint8_t[blob->data_length];
-    if (!data) {
-        ALOGE("Failed to allocate memory for blob");
-        *res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-        return out - start;
-    }
-    memcpy(data, out, blob->data_length);
-    out += blob->data_length;
-    blob->data = data;
-    return out - start;
-}
-
-int OpteeKeymasterDevice::deserialize_param_set(const uint8_t* out,
-                            keymaster_key_param_set_t* const params,
-                            keymaster_error_t* const res) {
-    size_t size;
-    const uint8_t* start = out;
-
-    *res = KM_ERROR_OK;
-    memcpy(&size, out, sizeof(size));
-    out += SIZE_LENGTH;
-    if (size > 0 && !params) {
-        ALOGE("Parameters deserialization can not be done, pointer is nullptr");
-        *res = KM_ERROR_OUTPUT_PARAMETER_NULL;
-        return out - start;
-    }
-    if (!params)
-        return out - start;
-    params->length = size;
-    params->params = new keymaster_key_param_t[params->length];
-    if (!params->params) {
-        ALOGE("Failed to allocate memory for param set");
-        *res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-        return out - start;
-    }
-    for(size_t i = 0; i < params->length; i++) {
-        memcpy(params->params + i, out, SIZE_OF_ITEM(params->params));
-        out += SIZE_OF_ITEM(params->params);
-        if (keymaster_tag_get_type(
-                params->params[i].tag) == KM_BIGNUM ||
-                keymaster_tag_get_type(params->params[i].tag) == KM_BYTES) {
-            out += deserialize_blob(out, &(params->params[i].blob), res);
-            if (*res != KM_ERROR_OK) {
-                ALOGE("Failed to deserialize blob in param");
-                return out - start;
-            }
-        }
-    }
-    return out - start;
-}
-
-int OpteeKeymasterDevice::get_blob_size_in_params(
-                               const keymaster_key_param_set_t* params) {
+int OpteeKeymasterDevice::getParamSetBlobSize(const KmParamSet &paramSet) {
     int size = 0;
-    for (size_t i = 0; i < params->length; i++) {
+    for (size_t i = 0; i < paramSet.length; i++) {
         if (keymaster_tag_get_type(
-                params->params[i].tag) == KM_BIGNUM ||
-                keymaster_tag_get_type(params->params[i].tag) == KM_BYTES) {
-            size += params->params[i].blob.data_length + SIZE_LENGTH;
+                paramSet.params[i].tag) == KM_BIGNUM ||
+                keymaster_tag_get_type(paramSet.params[i].tag) == KM_BYTES) {
+            size += paramSet.params[i].blob.data_length + sizeof(size_t);
         }
     }
     return size;
 }
 
-int OpteeKeymasterDevice::check_and_push_params(uint8_t* ptr,
-                       const keymaster_key_param_set_t* params) {
-    uint8_t* start = ptr;
-    if (params) {
-        ptr += serializePresence(ptr, KM_POPULATED);
-        ptr += serializeParams(ptr, params);
-    } else {
-        ptr += serializePresence(ptr, KM_NULL);
-    }
-    return ptr - start;
+int OpteeKeymasterDevice::getParamSetSize(const KmParamSet &paramSet) {
+    int size = 0;
+    size += getParamSetBlobSize(paramSet) + sizeof(paramSet.length) +
+        paramSet.length * SIZE_OF_ITEM(paramSet.params);
+    return size;
 }
 
-int OpteeKeymasterDevice::check_and_push_blob(uint8_t* ptr,
-                       const keymaster_blob_t* blob) {
-    uint8_t* start = ptr;
-    if (blob) {
-        ptr += serializePresence(ptr, KM_POPULATED);
-        ptr += serialize(ptr, blob->data_length, blob->data,
-                                               SIZE_OF_ITEM(blob->data));
-    } else {
-        ptr += serializePresence(ptr, KM_NULL);
-    }
-    return ptr - start;
+int OpteeKeymasterDevice::getBlobSize(const keymaster_blob_t &blob) {
+    int size = 0;
+    size += blob.data_length * SIZE_OF_ITEM(blob.data) + sizeof(size_t);
+    return size;
 }
 
-};
+int OpteeKeymasterDevice::getKeyBlobSize(const keymaster_key_blob_t &keyBlob) {
+    int size = 0;
+    size += keyBlob.key_material_size *
+        SIZE_OF_ITEM(keyBlob.key_material) + sizeof(size_t);
+    return size;
+}
+
+/****************************************************************************
+ *             Functions for serialization base KM types                    *
+ ****************************************************************************/
+
+int OpteeKeymasterDevice::serializeData(uint8_t *dest, const size_t count,
+                                    const uint8_t *source, const size_t objSize) {
+    memcpy(dest, &count, sizeof(count));
+    dest += sizeof(count);
+    memcpy(dest, source, count * objSize);
+    return sizeof(count) + count * objSize;
+}
+
+int OpteeKeymasterDevice::serializeSize(uint8_t *dest, const size_t size) {
+    memcpy(dest, &size, sizeof(size));
+    return sizeof(size);
+}
+
+int OpteeKeymasterDevice::serializeParamSet(uint8_t *dest,
+                                const KmParamSet &paramSet) {
+    uint8_t *start = dest;
+    dest += serializeSize(dest, paramSet.length);
+    for (size_t i = 0; i < paramSet.length; i++) {
+        memcpy(dest, &paramSet.params[i], SIZE_OF_ITEM(paramSet.params));
+        dest += SIZE_OF_ITEM(paramSet.params);
+        if (keymaster_tag_get_type(paramSet.params[i].tag) == KM_BIGNUM ||
+                keymaster_tag_get_type(paramSet.params[i].tag) == KM_BYTES) {
+                    dest += serializeData(dest, paramSet.params[i].blob.data_length,
+                    paramSet.params[i].blob.data,
+                    SIZE_OF_ITEM(paramSet.params[i].blob.data));
+        }
+    }
+    return dest - start;
+}
+
+int OpteeKeymasterDevice::serializePresence(uint8_t *dest, const presence p) {
+    memcpy(dest, &p, sizeof(presence));
+    return sizeof(presence);
+}
+
+int OpteeKeymasterDevice::serializeParamSetWithPresence(uint8_t *dest,
+                       const KmParamSet &params) {
+    uint8_t *start = dest;
+    dest += serializePresence(dest, KM_POPULATED);
+    dest += serializeParamSet(dest, params);
+    return dest - start;
+}
+
+int OpteeKeymasterDevice::serializeBlobWithPresenceInfo(uint8_t *dest, 
+                    const keymaster_blob_t &blob, bool presence) {
+    uint8_t *start = dest;
+    if (presence) {
+        dest += serializePresence(dest, KM_POPULATED);
+        dest += serializeData(dest, blob.data_length, blob.data,
+                                    SIZE_OF_ITEM(blob.data));
+    } else {
+        dest += serializePresence(dest, KM_NULL);
+    }
+    return dest - start;                  
+}
+
+int OpteeKeymasterDevice::serializeKeyFormat(uint8_t *dest,
+                const keymaster_key_format_t &keyFormat) {
+    memcpy(dest, &keyFormat, sizeof(keyFormat));
+    return sizeof(keyFormat);
+}
+
+/****************************************************************************
+ *             Functions for deserialization base KM types                  *
+ ****************************************************************************/
+
+int OpteeKeymasterDevice::deserializeSize(size_t &size, const uint8_t *source) {
+    memcpy(&size, source, sizeof(size));
+    return sizeof(size);
+}
+
+int OpteeKeymasterDevice::deserializeKeyBlob(keymaster_key_blob_t &keyBlob,
+                                const uint8_t *source, ErrorCode &rc) {
+    size_t size = 0;
+    uint8_t *material = nullptr;
+    const uint8_t *start = source;
+
+    source += deserializeSize(size, source);
+    keyBlob.key_material_size = size;
+    material = new (std::nothrow) uint8_t[keyBlob.key_material_size];
+    if (!material) {
+        rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+        goto error;
+    }
+    memcpy(material, source, keyBlob.key_material_size);
+    source += keyBlob.key_material_size;
+    keyBlob.key_material = material;
+error:
+    return source - start;
+}
+
+int OpteeKeymasterDevice::deserializeKeyCharacteristics(keymaster_key_characteristics_t &characteristics,
+                        const uint8_t *source, ErrorCode &rc) {
+    size_t size = 0;
+    const uint8_t *start = source;
+
+    source += deserializeSize(size, source);
+    characteristics.hw_enforced.length = size;
+    characteristics.hw_enforced.params =
+               new (std::nothrow) keymaster_key_param_t[characteristics.hw_enforced.length];
+    if (!characteristics.hw_enforced.params) {
+        rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+        goto error;
+    }
+    for (size_t i = 0; i < characteristics.hw_enforced.length; i++) {
+        memcpy(&characteristics.hw_enforced.params[i],
+            source, SIZE_OF_ITEM(characteristics.hw_enforced.params));
+            source += SIZE_OF_ITEM(characteristics.hw_enforced.params);
+        if (keymaster_tag_get_type(
+             characteristics.hw_enforced.params[i].tag) == KM_BIGNUM ||
+             keymaster_tag_get_type(characteristics.hw_enforced.params[i].tag)
+             == KM_BYTES) {
+            source += deserializeBlob(characteristics.hw_enforced.params[i].blob,
+                        source, rc);
+            if (rc != ErrorCode::OK)
+                    goto error;
+        }
+    }
+    memcpy(&characteristics.sw_enforced.length, source,
+                       sizeof(characteristics.sw_enforced.length));
+    source += sizeof(characteristics.sw_enforced.length);
+    characteristics.sw_enforced.params =
+               new (std::nothrow) keymaster_key_param_t[characteristics.sw_enforced.length];
+    if (!characteristics.sw_enforced.params) {
+        rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+        goto error;
+    }
+    for (size_t i = 0; i < characteristics.sw_enforced.length; i++) {
+        memcpy(&characteristics.sw_enforced.params[i], source,
+               SIZE_OF_ITEM(characteristics.sw_enforced.params));
+               source += SIZE_OF_ITEM(characteristics.sw_enforced.params);
+        if (keymaster_tag_get_type(
+             characteristics.sw_enforced.params[i].tag) == KM_BIGNUM ||
+             keymaster_tag_get_type(characteristics.sw_enforced.params[i].tag)
+             == KM_BYTES) {
+            source += deserializeBlob(characteristics.sw_enforced.params[i].blob,
+                            source, rc);
+            if (rc != ErrorCode::OK)
+                    goto error;
+        }
+    }
+error:
+    return source - start;
+}
+
+int OpteeKeymasterDevice::deserializeBlob(keymaster_blob_t &blob,
+                    const uint8_t *source, ErrorCode &rc) {
+    size_t size = 0;
+    uint8_t *data = nullptr;
+    const uint8_t *start = source;
+
+    source += deserializeSize(size, source);
+    blob.data_length = size;
+    data = new (std::nothrow) uint8_t[blob.data_length];
+    if (!data) {
+        ALOGE("Failed to allocate memory for blob");
+        rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+        goto error;
+    }
+    memcpy(data, source, blob.data_length);
+    source += blob.data_length;
+    blob.data = data;
+error:
+    return source - start;
+}
+
+int OpteeKeymasterDevice::deserializeParamSet(KmParamSet &params,
+                    const uint8_t *source, ErrorCode &rc) {
+    size_t size = 0;
+    const uint8_t *start = source;
+
+    source += deserializeSize(size, source);
+    params.length = size;
+    params.params = new (std::nothrow) keymaster_key_param_t[params.length];
+    if (!params.params) {
+        ALOGE("Failed to allocate memory for param set");
+        rc = ErrorCode::MEMORY_ALLOCATION_FAILED;
+        goto error;
+    }
+    for(size_t i = 0; i < params.length; i++) {
+        memcpy(&params.params[i], source, SIZE_OF_ITEM(params.params));
+        source += SIZE_OF_ITEM(params.params);
+        if (keymaster_tag_get_type(
+                params.params[i].tag) == KM_BIGNUM ||
+                keymaster_tag_get_type(params.params[i].tag) == KM_BYTES) {
+                    source += deserializeBlob(params.params[i].blob, source, rc);
+            if (rc != ErrorCode::OK) {
+                ALOGE("Failed to deserialize blob in param");
+                goto error;
+            }
+        }
+    }
+error:
+    return source - start;
+}
+
+}  // namespace renesas
+}  // namespace V3_0
+}  // namespace keymaster
+}  // namespace hardware
+}  // namespace android

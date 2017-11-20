@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Include only for Renesas ones.
+ifneq (,$(filter $(TARGET_PRODUCT), salvator ulcb kingfisher))
 LOCAL_PATH:= $(call my-dir)
 
 ################################################################################
@@ -55,3 +57,4 @@ TA_UUID:=dba51a17-0563-11e7-93b16fa7b0071a51
 TA_SRC:=$(LOCAL_PATH)/ta
 
 include $(TARGET_DEVICE_DIR)/build/ta_build_executable.mk
+endif # Include only for Renesas ones.

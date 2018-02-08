@@ -84,6 +84,7 @@ keymaster_error_t TA_create_digest_op(TEE_OperationHandle *digest_op,
 				const keymaster_digest_t digest);
 
 keymaster_error_t TA_check_hmac_key_size(keymaster_blob_t *key_data,
+				uint32_t *key_size,
 				const keymaster_digest_t digest);
 
 keymaster_error_t TA_check_hmac_key(const uint32_t type, uint32_t *key_size);

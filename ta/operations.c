@@ -16,6 +16,7 @@
  */
 
 #include "operations.h"
+#include "parameters.h"
 
 static keymaster_operation_t operations[KM_MAX_OPERATION];
 
@@ -70,6 +71,7 @@ keymaster_error_t TA_abort_operation(
 				TA_free_blob_list(operations[i].sf_item);
 			operations[i].sf_item = NULL;
 			operations[i].mac_length = UNDEFINED;
+			operations[i].digestLength = UNDEFINED;
 			if (operations[i].a_data)
 				TEE_Free(operations[i].a_data);
 			operations[i].a_data = NULL;
@@ -108,6 +110,7 @@ void TA_reset_operations_table(void)
 		operations[i].got_input = false;
 		operations[i].sf_item = NULL;
 		operations[i].mac_length = UNDEFINED;
+		operations[i].digestLength = UNDEFINED;
 		operations[i].a_data = NULL;
 		operations[i].a_data_length = 0;
 		operations[i].buffering = false;
@@ -150,6 +153,7 @@ keymaster_error_t TA_try_start_operation(
 				const keymaster_padding_t padding,
 				const keymaster_block_mode_t mode,
 				const uint32_t mac_length,
+				const keymaster_digest_t digest,
 				const keymaster_blob_t nonce)
 {
 	TEE_Time cur_t;
@@ -188,7 +192,7 @@ keymaster_error_t TA_try_start_operation(
 			operations[i].mac_length = mac_length;
 			operations[i].padding = padding;
 			operations[i].mode = mode;
-			operations[i].mac_length = mac_length;
+			operations[i].digestLength = get_digest_size(&digest) / 8; /*in bytes*/
 			operations[i].nonce.data = TEE_Malloc(
 						nonce.data_length,
 						TEE_MALLOC_FILL_ZERO);
@@ -215,13 +219,14 @@ keymaster_error_t TA_start_operation(
 				const keymaster_padding_t padding,
 				const keymaster_block_mode_t mode,
 				const uint32_t mac_length,
+				const keymaster_digest_t digest,
 				const keymaster_blob_t nonce)
 {
 	keymaster_error_t res = TA_try_start_operation(op_handle, key, min_sec,
 							operation, purpose,
 							digest_op, do_auth,
 							padding, mode,
-							mac_length, nonce);
+							mac_length, digest, nonce);
 	if (res != KM_ERROR_OK) {
 		res = TA_kill_old_operation();
 		if (res == KM_ERROR_OK) {
@@ -229,7 +234,7 @@ keymaster_error_t TA_start_operation(
 							operation, purpose,
 							digest_op, do_auth,
 							padding, mode,
-							mac_length, nonce);
+							mac_length, digest, nonce);
 		}
 	}
 	return res;

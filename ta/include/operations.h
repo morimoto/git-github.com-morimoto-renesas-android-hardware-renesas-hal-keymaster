@@ -47,6 +47,7 @@ typedef struct {
 	size_t prev_in_size;
 	uint32_t min_sec;
 	uint32_t mac_length;
+	uint32_t digestLength;
 	uint32_t a_data_length;
 	uint8_t *a_data;
 	bool do_auth;
@@ -69,6 +70,7 @@ keymaster_error_t TA_try_start_operation(
 				const keymaster_padding_t padding,
 				const keymaster_block_mode_t mode,
 				const uint32_t mac_length,
+				const keymaster_digest_t digest,
 				const keymaster_blob_t nonce);
 
 keymaster_error_t TA_start_operation(
@@ -82,6 +84,7 @@ keymaster_error_t TA_start_operation(
 				const keymaster_padding_t padding,
 				const keymaster_block_mode_t mode,
 				const uint32_t mac_length,
+				const keymaster_digest_t digest,
 				const keymaster_blob_t nonce);
 
 keymaster_error_t TA_get_operation(const keymaster_operation_handle_t op_handle,

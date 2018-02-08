@@ -154,6 +154,7 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 	}
 	if (operation->purpose == KM_PURPOSE_VERIFY && (signature.data == NULL
 					|| signature.data_length == 0)) {
+		EMSG("RSA verification signature is absent");
 		res = KM_ERROR_VERIFICATION_FAILED;
 		goto out;
 	}
@@ -181,6 +182,16 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 				if (res != KM_ERROR_OK)
 					goto out;
 			}
+			/* if the provided data is longer than the key */
+			else if (in_buf_l > key_size / 8) {
+				EMSG("RSA encryption of too-long message");
+				res = KM_ERROR_INVALID_INPUT_LENGTH;
+				goto out;
+			}
+		} else if (operation->purpose == KM_PURPOSE_VERIFY ) {
+			/* Input is signature */
+			in_buf = signature.data;
+			in_buf_l = signature.data_length;
 		}
 	}
 	res = TA_check_input_rsa(operation, in_buf, in_buf_l, key_size, obj_h);
@@ -188,6 +199,24 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 		goto out;
 	switch (operation->purpose) {
 	case KM_PURPOSE_ENCRYPT:
+		if (operation->padding == KM_PAD_RSA_PKCS1_1_5_ENCRYPT) {
+			/* Size of the RSA key must be at least
+			 * 11 bytes larger than the message
+			 */
+			if (in_buf_l + 11 > key_size / 8) {
+				EMSG("RSA key must be at least 11 bytes larger than the message");
+				res = KM_ERROR_INVALID_INPUT_LENGTH;
+				goto out;
+			}
+		}
+		if (operation->padding == KM_PAD_RSA_OAEP) {
+			/* mLen <= k - 2hLen - 2 */
+			if (in_buf_l + 2 + 2 * operation->digestLength > key_size / 8) {
+				EMSG("RSA OAEP encryption too large message %d", in_buf_l);
+				res = KM_ERROR_INVALID_INPUT_LENGTH;
+				goto out;
+			}
+		}
 		res = TEE_AsymmetricEncrypt(*operation->operation, NULL, 0,
 					in_buf, in_buf_l,
 					output->data, out_size);
@@ -209,17 +238,19 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 				goto out;
 			}
 		}
-		if (operation->purpose == KM_PURPOSE_VERIFY) {
+		if (operation->purpose == KM_PURPOSE_VERIFY &&
+				operation->padding != KM_PAD_NONE) {
 			*out_size = 0;
 			res = TEE_AsymmetricVerifyDigest(*operation->operation,
 						attrs, attrs_count, in_buf,
 						in_buf_l,
 						signature.data,
 						signature.data_length);
-			/* Convert error code to ANdroid style */
+			/* Convert error code to Android style */
 			if ((uint32_t) res == TEE_ERROR_SIGNATURE_INVALID)
 				res = KM_ERROR_VERIFICATION_FAILED;
-		} else {/* KM_PURPOSE_SIGN */
+		} else if (operation->purpose == KM_PURPOSE_SIGN &&
+				operation->padding != KM_PAD_NONE) {
 			res = TEE_AsymmetricSignDigest(*operation->operation,
 						attrs,
 						attrs_count,
@@ -233,6 +264,28 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 					KM_PAD_RSA_PKCS1_1_5_SIGN) {
 				res = KM_ERROR_INVALID_ARGUMENT;
 			}
+		} else if (operation->purpose == KM_PURPOSE_VERIFY &&
+				operation->padding == KM_PAD_NONE) {
+			res = TEE_AsymmetricEncrypt(*operation->operation, NULL, 0,
+						in_buf, in_buf_l, /*in: signature*/
+						output->data, out_size); /*out: message + padding*/
+			if ((uint32_t)res == TEE_ERROR_BAD_PARAMETERS ||
+					(uint32_t)res == TEE_ERROR_SHORT_BUFFER)
+				res = KM_ERROR_UNKNOWN_ERROR;
+
+			output->data_length = *out_size;
+			*out_size = 0;
+			if (TEE_MemCompare(output->data, input->data,
+					output->data_length) != 0) {
+				EMSG("RSA no pad verification signature failed");
+				res = KM_ERROR_VERIFICATION_FAILED;
+				goto out;
+			}
+		} else if (operation->purpose == KM_PURPOSE_SIGN &&
+				operation->padding == KM_PAD_NONE) {
+			res = TEE_AsymmetricDecrypt(*operation->operation, NULL, 0,
+						in_buf, in_buf_l,
+						output->data, out_size);
 		}
 		break;
 	default:
@@ -253,7 +306,7 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 	/* Convert error code to Android type */
 	if (res == (int) TEE_ERROR_BAD_PARAMETERS &&
 				operation->padding != KM_PAD_NONE)
-		res = KM_ERROR_INVALID_INPUT_LENGTH;
+		res = KM_ERROR_UNKNOWN_ERROR;
 out:
 	return res;
 }

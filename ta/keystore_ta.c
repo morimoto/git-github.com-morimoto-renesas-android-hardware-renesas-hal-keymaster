@@ -418,7 +418,7 @@ static keymaster_error_t TA_importKey(TEE_Param params[TEE_NUM_PARAMS])
 		if (key_size == UNDEFINED)
 			key_size = key_data.data_length * 8;
 		if (key_algorithm == KM_ALGORITHM_HMAC) {
-			res = TA_check_hmac_key_size(&key_data, key_digest);
+			res = TA_check_hmac_key_size(&key_data, &key_size, key_digest);
 			if (res != KM_ERROR_OK) {
 				EMSG("HMAC key check failed");
 				goto out;
@@ -1012,7 +1012,7 @@ static keymaster_error_t TA_begin(TEE_Param params[TEE_NUM_PARAMS])
 	}
 	res = TA_start_operation(operation_handle, key, min_sec,
 					operation, purpose, digest_op, do_auth,
-					padding, mode, mac_length,nonce);
+					padding, mode, mac_length, digest, nonce);
 	if (res != KM_ERROR_OK)
 		goto out;
 	out += TA_serialize_param_set(out, &out_params);
@@ -1219,7 +1219,7 @@ static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS])
 	switch (type) {
 	case TEE_TYPE_AES:
 		res = TA_aes_finish(&operation, &input, &output, &out_size,
-					tag_len, &is_input_ext);
+					tag_len, &is_input_ext, &in_params);
 		break;
 	case TEE_TYPE_RSA_KEYPAIR:
 		res = TA_rsa_finish(&operation, &input, &output, &out_size,

@@ -58,7 +58,7 @@ static keymaster_error_t TA_append_input(keymaster_blob_t *input,
 	input->data = data;
 	input->data_length += push_to_input;
 	operation->a_data_length -= push_to_input;
-	TEE_MemMove(operation->a_data, operation->a_data + 1,
+	TEE_MemMove(operation->a_data, operation->a_data + push_to_input,
 					operation->a_data_length);
 	*is_input_ext = true;
 	return KM_ERROR_OK;
@@ -102,11 +102,13 @@ static keymaster_error_t TA_aes_gcm_prepare(keymaster_operation_t *operation,
 			}
 			TEE_AEUpdateAAD(*operation->operation,
 				in_params->params[i].key_param.blob.data,
-				in_params->params[i].key_param.
-						blob.data_length);
+				in_params->params[i].key_param.blob.data_length);
 			break;
 		}
 	}
+	if (input->data_length != 0)
+		operation->got_input = true;
+
 	/* During AES GCM decryption, the last KM_TAG_MAC_LENGTH bytes
 	 * of the data provided to the last update call is the tag
 	 */
@@ -137,7 +139,8 @@ static keymaster_error_t TA_aes_gcm_prepare(keymaster_operation_t *operation,
 keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
  				keymaster_blob_t *input,
  				keymaster_blob_t *output, uint32_t *out_size,
-				uint32_t tag_len, bool *is_input_ext)
+				uint32_t tag_len, bool *is_input_ext,
+				const keymaster_key_param_set_t *in_params)
 {
 	TEE_Result tee_res = TEE_SUCCESS;
 	keymaster_error_t res = KM_ERROR_OK;
@@ -156,9 +159,18 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 		EMSG("Input data size for AES CBC and ECB modes without padding must be a multiple of block size");
 		res = KM_ERROR_INVALID_INPUT_LENGTH;
 		goto out;
+	} else if (operation->padding == KM_PAD_PKCS7 &&
+			operation->purpose == KM_PURPOSE_DECRYPT &&
+			input->data_length % BLOCK_SIZE != 0) {
+		EMSG("Input data size for AES PKCS7 must be a multiple of block size");
+		res = KM_ERROR_INVALID_INPUT_LENGTH;
+		goto out;
 	}
 	if (operation->mode == KM_MODE_GCM) {
 		/* For KM_MODE_GCM */
+		res = TA_aes_gcm_prepare(operation, in_params, input, is_input_ext);
+		if (res != KM_ERROR_OK)
+			goto out;
 		if (operation->purpose == KM_PURPOSE_ENCRYPT) {
 			/* During encryption */
 			tag = TEE_Malloc(tag_len, TEE_MALLOC_FILL_ZERO);
@@ -187,7 +199,7 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 			tee_res = TEE_AEDecryptFinal(*operation->operation,
 						input->data, input->data_length,
 						output->data, out_size,
-						operation->a_data,
+						operation->a_data, /*tag to compare*/
 						operation->mac_length / 8);
 			if (tee_res == TEE_ERROR_MAC_INVALID) {
 				/* tag verification fails */
@@ -201,10 +213,10 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 					input->data_length, output->data,
 					out_size);
 	}
+	output->data_length = *out_size;
 	if (res == KM_ERROR_OK && operation->padding == KM_PAD_PKCS7
 			&& operation->purpose == KM_PURPOSE_DECRYPT) {
 		if (output->data_length > 0) {
-			output->data_length = *out_size;
 			res = TA_remove_pkcs7_pad(output, out_size);
 			if (res == KM_ERROR_OK)
 				operation->padded = true;

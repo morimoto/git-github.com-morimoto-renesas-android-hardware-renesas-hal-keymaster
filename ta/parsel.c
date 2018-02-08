@@ -68,6 +68,7 @@ int TA_deserialize_blob(uint8_t *in, const uint8_t *end,
 	} else {
 		/* Not allocate memory, it can be too large */
 		blob->data = in;
+		in += blob->data_length;
 	}
 	return in - start;
 }

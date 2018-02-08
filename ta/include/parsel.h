@@ -26,9 +26,11 @@
 #include "ta_ca_defs.h"
 
 #define MAX_OCTET_COUNT 10
-#define ADDITIONAL_TAGS 3 /*
+#define ADDITIONAL_TAGS 6 /*
 			   * Number of tags that can be added
-			   * (KM_TAG_ORIGIN, KM_TAG_KEY_SIZE,
+			   * (KM_TAG_ORIGIN, KM_TAG_CREATION_DATETIME,
+			   * KM_TAG_OS_VERSION, KM_TAG_OS_PATCHLEVEL,
+			   * KM_TAG_KEY_SIZE,
 			   * KM_TAG_RSA_PUBLIC_EXPONENT)
 			   */
 

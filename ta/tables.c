@@ -24,6 +24,15 @@ static uint32_t in_use_c;
 keymaster_error_t TA_count_key_uses(const keymaster_key_blob_t key,
 				const uint32_t max_uses)
 {
+	/*FIXME - no decrement*/
+	if (in_use_c < KM_MAX_USE_COUNTERS) {
+		use_counters[in_use_c].key = key;
+		use_counters[in_use_c].count = 0;
+		in_use_c++;
+	} else {
+		return KM_ERROR_TOO_MANY_OPERATIONS;
+	}
+
 	for (uint32_t i = 0; i < in_use_c; i++) {
 		if (key.key_material_size !=
 				use_counters[i].key.key_material_size)
@@ -38,13 +47,6 @@ keymaster_error_t TA_count_key_uses(const keymaster_key_blob_t key,
 			EMSG("Reached max key use count!");
 			return KM_ERROR_KEY_MAX_OPS_EXCEEDED;
 		}
-	}
-	if (in_use_c < KM_MAX_USE_COUNTERS) {
-		use_counters[in_use_c].key = key;
-		use_counters[in_use_c].count = 0;
-		in_use_c++;
-	} else {
-		return KM_ERROR_TOO_MANY_OPERATIONS;
 	}
 	return KM_ERROR_OK;
 }

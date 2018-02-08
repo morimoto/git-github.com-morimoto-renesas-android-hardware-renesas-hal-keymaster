@@ -29,7 +29,8 @@
 keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 				keymaster_blob_t *input,
 				keymaster_blob_t *output, uint32_t *out_size,
-				uint32_t tag_len, bool *is_input_ext);
+				uint32_t tag_len, bool *is_input_ext,
+				const keymaster_key_param_set_t *in_params);
 
 keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 				keymaster_blob_t *input,

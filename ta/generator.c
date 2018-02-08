@@ -124,14 +124,21 @@ bool is_attr_value(const uint32_t tag)
 }
 
 keymaster_error_t TA_check_hmac_key_size(keymaster_blob_t *key_data,
+				uint32_t *key_size,
 				const keymaster_digest_t digest)
 {
 	uint32_t min = 0;
 	uint32_t max = 0;
 	uint8_t *buf = NULL;
+	keymaster_error_t res = KM_ERROR_OK;
+	TEE_OperationHandle digest_op = TEE_HANDLE_NULL;
+	uint32_t digest_out_size = 64;
+	uint8_t digest_out[64];
 
-	if (key_data->data_length == 0)
+	if (key_data->data_length == 0) {
+		EMSG("HMAC key zero length");
 		return KM_ERROR_UNSUPPORTED_KEY_SIZE;
+	}
 	switch (digest) {
 	case KM_DIGEST_MD5:
 		min = MIN_HMAC_MD5;
@@ -162,8 +169,26 @@ keymaster_error_t TA_check_hmac_key_size(keymaster_blob_t *key_data,
 	}
 	max /= 8;
 	min /= 8;
-	if (key_data->data_length > max)
-		return KM_ERROR_UNSUPPORTED_KEY_SIZE;
+
+	if (key_data->data_length > max) {
+		res = TA_create_digest_op(&digest_op, digest);
+		if (res != KM_ERROR_OK)
+			return res;
+		res = TEE_DigestDoFinal(digest_op,
+				key_data->data,
+				key_data->data_length,
+				digest_out,
+				&digest_out_size);
+		if (res != KM_ERROR_OK) {
+			EMSG("Failed to hash HMAC key");
+			return res;
+		}
+		TEE_MemMove(key_data->data, digest_out, digest_out_size);
+		key_data->data_length = digest_out_size;
+		*key_size = digest_out_size * 8;
+		TEE_FreeOperation(digest_op);
+	}
+
 	if (key_data->data_length <= min) {
 		buf = TEE_Malloc(min, TEE_MALLOC_FILL_ZERO);
 		if (!buf) {
@@ -328,7 +353,7 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 			type = TEE_TYPE_HMAC_SHA512;
 			break;
 		default:
-			return KM_ERROR_INCOMPATIBLE_DIGEST;
+			return KM_ERROR_UNSUPPORTED_DIGEST;
 		}
 		break;
 	case KM_ALGORITHM_RSA:
@@ -372,7 +397,7 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 		curve = TA_get_curve_nist(key_size);
 		if (curve == UNDEFINED) {
 			EMSG("Failed to get curve nist");
-			res = KM_ERROR_UNSUPPORTED_EC_CURVE;
+			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
 			goto gk_out;
 		}
 		TEE_InitValueAttribute(attrs_in,
@@ -692,6 +717,9 @@ keymaster_error_t TA_create_operation(TEE_OperationHandle *operation,
 			case KM_DIGEST_SHA_2_512:
 				algo = TEE_ALG_RSASSA_PKCS1_PSS_MGF1_SHA512;
 				break;
+			case KM_DIGEST_NONE:
+				EMSG("Incompatible by RSA PSS digest");
+				return KM_ERROR_INCOMPATIBLE_DIGEST;
 			default:
 				EMSG("Unsupported by RSA PSS digest");
 				return KM_ERROR_UNSUPPORTED_DIGEST;
@@ -725,6 +753,10 @@ keymaster_error_t TA_create_operation(TEE_OperationHandle *operation,
 			break;
 		default:/* KM_PAD_NONE */
 			algo = TEE_ALG_RSA_NOPAD;
+			if (purpose == KM_PURPOSE_SIGN)
+				mode = TEE_MODE_DECRYPT;
+			else if (purpose == KM_PURPOSE_VERIFY)
+				mode = TEE_MODE_ENCRYPT;
 		}
 		break;
 	case (KM_ALGORITHM_EC):

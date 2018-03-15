@@ -93,7 +93,7 @@ static keymaster_error_t TA_check_input_rsa(const keymaster_operation_t *operati
 						modulus,
 						&modulus_size);
 			if (res != KM_ERROR_OK) {
-				EMSG("Failed to read RSA key");
+				EMSG("Failed to read RSA key, res=%x", res);
 				goto out;
 			}
 			if (TEE_MemCompare(in_buf, modulus, in_buf_l) >= 0) {
@@ -139,7 +139,7 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 		res = TEE_DigestDoFinal(*operation->digest_op, input->data,
 			input->data_length, digest_out, &digest_out_size);
 		if (res != KM_ERROR_OK) {
-			EMSG("Failed failed to obtain digest for RSA");
+			EMSG("Failed failed to obtain digest for RSA, res=%x", res);
 			goto out;
 		}
 		in_buf = digest_out;

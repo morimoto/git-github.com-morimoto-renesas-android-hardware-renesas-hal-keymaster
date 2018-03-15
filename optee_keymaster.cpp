@@ -15,6 +15,8 @@
  */
 
 #include <utils/Log.h>
+#include <cutils/properties.h>
+#include <cstring>
 #include <memory>
 #include <new>
 
@@ -247,6 +249,56 @@ error:
     return rc;
 }
 
+int OpteeKeymasterDevice::osVersion(uint32_t *in) {
+    char value[PROPERTY_VALUE_MAX] = {0,};
+    char *str = value;
+
+    if (property_get("ro.build.version.release", value, "") <= 0) {
+        ALOGE("Error get property ro.build.version.release");
+        *in = 0xFFFFFFFF;
+        goto exit;
+    }
+    *in = (uint32_t) std::atoi(str) * 10000;
+
+    if ((str = std::strchr(str, '.')) != NULL) {
+        *in += (uint32_t) std::atoi(str + 1) * 100;
+    } else {
+        *in = 0xFFFFFFFF;
+        goto exit;
+    }
+
+    if ((str = std::strchr(str + 1, '.')) != NULL) {
+        *in += (uint32_t) std::atoi(str + 1);
+    } else {
+        *in = 0xFFFFFFFF;
+    }
+
+exit:
+    return sizeof(*in);
+}
+
+int OpteeKeymasterDevice::osPatchlevel(uint32_t *in) {
+    char value[PROPERTY_VALUE_MAX] = {0,};
+    char *str = value;
+
+    if (property_get("ro.build.version.security_patch", value, "") <= 0) {
+        ALOGE("Error get property ro.build.version.security_patch");
+        *in = 0xFFFFFFFF;
+        goto exit;
+    }
+
+    *in = (uint32_t) std::atoi(str) * 100;
+
+    if ((str = std::strchr(str, '-')) != NULL) {
+        *in += (uint32_t) std::atoi(str + 1);
+    } else {
+        *in = 0xFFFFFFFF;
+    }
+
+exit:
+    return sizeof(*in);
+}
+
 Return<void> OpteeKeymasterDevice::generateKey(const hidl_vec<KeyParameter> &keyParams,
                                           generateKey_cb _hidl_cb) {
     ErrorCode rc = ErrorCode::OK;
@@ -256,7 +308,7 @@ Return<void> OpteeKeymasterDevice::generateKey(const hidl_vec<KeyParameter> &key
     keymaster_key_blob_t kmKeyBlob{nullptr, 0};
     keymaster_key_characteristics_t kmKeyCharacteristics{{nullptr, 0}, {nullptr, 0}};
     uint32_t outSize = recv_buf_size_;
-    uint32_t inSize = getParamSetSize(kmParams);
+    uint32_t inSize = getParamSetSize(kmParams) + 2 * sizeof(uint32_t); //+ os_version & patchlevel
     uint8_t out[outSize];
     uint8_t in[inSize];
     uint8_t *ptr = nullptr;
@@ -264,7 +316,12 @@ Return<void> OpteeKeymasterDevice::generateKey(const hidl_vec<KeyParameter> &key
         goto error;
     memset(out, 0, outSize);
     memset(in, 0, inSize);
-    serializeParamSet(in, kmParams);
+
+    ptr = in;
+    ptr += serializeParamSet(ptr, kmParams);
+
+    ptr += osVersion((uint32_t *)ptr);
+    ptr += osPatchlevel((uint32_t *)ptr);
 
     rc = legacy_enum_conversion(
         optee_keystore_call(KM_GENERATE_KEY, in,
@@ -482,6 +539,27 @@ error:
     return Void();
 }
 
+int OpteeKeymasterDevice::verifiedBootState(uint8_t *in) {
+    char value[PROPERTY_VALUE_MAX] = {0,};
+
+    if (property_get("ro.boot.verifiedbootstate", value, "") > 0) {
+        if (value[0] == 'g') {
+            *in = (uint8_t) 0x0;
+        } else if (value[0] == 'y') {
+            *in = (uint8_t) 0x1;
+        } else if (value[0] == 'o') {
+            *in = (uint8_t) 0x2;
+        } else {
+            *in = (uint8_t) 0xff;
+        }
+    } else {
+        ALOGE("Error get property ro.boot.verifiedbootstate");
+        *in = (uint8_t) 0xff;
+    }
+
+    return sizeof(*in);
+}
+
 Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAttest,
                        const hidl_vec<KeyParameter> &attestParams,
                        attestKey_cb _hidl_cb) {
@@ -491,7 +569,8 @@ Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAtte
     keymaster_key_blob_t kmKeyToAttest = hidlVec2KmKeyBlob(keyToAttest);
     KmParamSet kmAttestParams = hidlParams2KmParamSet(attestParams);
     int outSize = recv_buf_size_;
-    int inSize = getParamSetSize(kmAttestParams) + getKeyBlobSize(kmKeyToAttest);
+    int inSize = getParamSetSize(kmAttestParams) + getKeyBlobSize(kmKeyToAttest)
+               + sizeof(uint8_t);  // verifiedbootstate
     uint8_t out[outSize];
     uint8_t in[inSize];
     uint8_t *perm = nullptr;
@@ -527,6 +606,9 @@ Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAtte
                     kmKeyToAttest.key_material,
                     SIZE_OF_ITEM(kmKeyToAttest.key_material));
     ptr += serializeParamSet(ptr, kmAttestParams);
+
+    ptr += verifiedBootState(ptr);
+
     rc = legacy_enum_conversion(
         optee_keystore_call(KM_ATTEST_KEY, in, inSize, out, outSize));
 

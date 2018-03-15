@@ -28,14 +28,12 @@
 #include "ta_ca_defs.h"
 #include "paddings.h"
 
-TEE_Result TA_read_secret_key(TEE_ObjectHandle *secretKey);
+TEE_Result TA_open_secret_key(TEE_ObjectHandle *secretKey);
 
 TEE_Result TA_create_secret_key(void);
 
 TEE_Result TA_execute(uint8_t *data, const size_t size, const uint32_t mode);
-
 TEE_Result TA_encrypt(uint8_t *data, const size_t size);
-
 TEE_Result TA_decrypt(uint8_t *data, const size_t size);
 
 void TA_free_master_key(void);

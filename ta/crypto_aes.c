@@ -172,7 +172,7 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 						output->data, out_size,
 						tag, &tag_len);
 			if (res != KM_ERROR_OK) {
-				EMSG("TEE_AEEncryptFinal failed!");
+				EMSG("TEE_AEEncryptFinal failed, res=%x", res);
 				goto out;
 			}
 			/* after processing all plaintext, compute the
@@ -191,7 +191,7 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 						operation->mac_length / 8);
 			if (tee_res == TEE_ERROR_MAC_INVALID) {
 				/* tag verification fails */
-				EMSG("AES GCM verification failed");
+				EMSG("AES GCM verification failed, res=%x", res);
 				res = KM_ERROR_VERIFICATION_FAILED;
 				goto out;
 			}
@@ -361,7 +361,7 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 					input->data + pos, in_size,
 					output->data + pos, out_size);
 			if (res != TEE_SUCCESS) {
-				EMSG("Error TEE_CipherUpdate res = %x", res);
+				EMSG("Error TEE_CipherUpdate, res=%x", res);
 				goto out;
 			}
 			output->data_length += *out_size;

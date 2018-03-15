@@ -18,7 +18,8 @@
 #include "generator.h"
 
 uint32_t attributes_aes_hmac[KM_ATTR_COUNT_AES_HMAC] = {TEE_ATTR_SECRET_VALUE};
-uint32_t attributes_rsa[KM_ATTR_COUNT_RSA] = {TEE_ATTR_RSA_MODULUS,
+uint32_t attributes_rsa[KM_ATTR_COUNT_RSA] = {
+						TEE_ATTR_RSA_MODULUS,
 						TEE_ATTR_RSA_PUBLIC_EXPONENT,
 						TEE_ATTR_RSA_PRIVATE_EXPONENT,
 						TEE_ATTR_RSA_PRIME1,
@@ -26,7 +27,8 @@ uint32_t attributes_rsa[KM_ATTR_COUNT_RSA] = {TEE_ATTR_RSA_MODULUS,
 						TEE_ATTR_RSA_EXPONENT1,
 						TEE_ATTR_RSA_EXPONENT2,
 						TEE_ATTR_RSA_COEFFICIENT};
-uint32_t attributes_ec[KM_ATTR_COUNT_EC] = {TEE_ATTR_ECC_CURVE,
+uint32_t attributes_ec[KM_ATTR_COUNT_EC] = {
+						TEE_ATTR_ECC_CURVE,
 						TEE_ATTR_ECC_PUBLIC_VALUE_X,
 						TEE_ATTR_ECC_PUBLIC_VALUE_Y,
 						TEE_ATTR_ECC_PRIVATE_VALUE};
@@ -185,6 +187,7 @@ keymaster_error_t TA_import_key(const keymaster_algorithm_t algorithm,
 {
 	uint32_t type;
 	uint32_t padding = 0;
+
 
 	switch (algorithm) {
 	case KM_ALGORITHM_AES:
@@ -374,21 +377,19 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 		}
 		TEE_InitValueAttribute(attrs_in,
 				TEE_ATTR_ECC_CURVE,
-				curve,
-				0);
+				curve, 0);
 		break;
 	default:
 		return KM_ERROR_UNSUPPORTED_ALGORITHM;
 	}
 	res = TEE_AllocateTransientObject(type, key_size, &obj_h);
 	if (res != TEE_SUCCESS) {
-		EMSG("Failed to allocatre transient object");
+		EMSG("Failed to allocate transient object, res=%x", res);
 		goto gk_out;
 	}
 	res = TEE_GenerateKey(obj_h, key_size, attrs_in, attrs_in_count);
 	if (res != TEE_SUCCESS) {
-		EMSG("Failed to generate key via TEE_GenerateKey res = %x",
-									res);
+		EMSG("Failed to generate key via TEE_GenerateKey, res = %x", res);
 		/* Convert error code to Android style */
 		if (res == TEE_ERROR_NOT_SUPPORTED)
 			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
@@ -406,10 +407,10 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 		padding += sizeof(attributes[i]);
 		if (is_attr_value(attributes[i])) {
 			/* value */
-			TEE_GetObjectValueAttribute(obj_h,
+			res = TEE_GetObjectValueAttribute(obj_h,
 						attributes[i], &a, &b);
 			if (res != TEE_SUCCESS) {
-				EMSG("Failed to get value attribute");
+				EMSG("Failed to get value attribute, res = %x", res);
 				break;
 			}
 			TEE_MemMove(key_material + padding, &a, sizeof(a));
@@ -421,8 +422,8 @@ keymaster_error_t TA_generate_key(const keymaster_algorithm_t algorithm,
 			res = TEE_GetObjectBufferAttribute(obj_h,
 					attributes[i], buffer, &attr_size);
 			if (res != TEE_SUCCESS) {
-				EMSG("Failed to get buffer attribute %x",
-								attributes[i]);
+				EMSG("Failed to get buffer attribute %x, res = %x",
+								attributes[i], res);
 				break;
 			}
 			TEE_MemMove(key_material + padding,
@@ -436,6 +437,7 @@ gk_out:
 	if (obj_h != TEE_HANDLE_NULL)
 		TEE_FreeTransientObject(obj_h);
 	free_attrs(attrs_in, attrs_in_count);
+
 	return res;
 }
 
@@ -573,7 +575,7 @@ keymaster_error_t TA_restore_key(uint8_t *key_material,
 	if (algorithm == KM_ALGORITHM_HMAC) {
 		res = TA_check_hmac_key(*type, key_size);
 		if (res != KM_ERROR_OK) {
-			EMSG("HMAC key checking failed");
+			EMSG("HMAC key checking failed res = %x", res);
 			goto out_rk;
 		}
 	}
@@ -597,6 +599,7 @@ keymaster_error_t TA_restore_key(uint8_t *key_material,
 	TA_add_origin(params_t, KM_ORIGIN_UNKNOWN, false);
 out_rk:
 	free_attrs(attrs, attrs_count);
+
 	return res;
 }
 

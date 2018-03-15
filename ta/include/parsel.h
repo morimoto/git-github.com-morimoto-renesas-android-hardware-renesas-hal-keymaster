@@ -35,7 +35,7 @@
 #define IS_OUT_OF_BOUNDS(ptr, end, required) \
 			(end ? (ptr + required > end) : false)
 
-/* Serealizers */
+/* Serializers */
 int TA_serialize_blob(uint8_t *out, const keymaster_blob_t *export_data);
 
 int TA_serialize_characteristics(uint8_t *out,
@@ -50,7 +50,15 @@ int TA_serialize_cert_chain(uint8_t *out,
 int TA_serialize_param_set(uint8_t *out,
 			const keymaster_key_param_set_t *params);
 
-/* Deseriazers */
+TEE_Result TA_serialize_rsa_keypair(uint8_t *out,
+				    uint32_t *out_size,
+				    const TEE_ObjectHandle key_obj);
+
+TEE_Result TA_serialize_ec_keypair(uint8_t *out,
+				   uint32_t *out_size,
+				   const TEE_ObjectHandle key_obj);
+
+/* Deserializers */
 int TA_deserialize_blob(uint8_t *in, const uint8_t *end,
 			keymaster_blob_t *blob_t,
 			const bool check_presence, keymaster_error_t *res,

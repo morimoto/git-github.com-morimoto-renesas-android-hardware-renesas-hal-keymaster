@@ -23,7 +23,6 @@ static keymaster_error_t TA_check_ec_data_size(uint8_t **data, uint32_t *data_l,
 	keymaster_error_t res = KM_ERROR_OK;
 	uint32_t key_size_bytes = (key_size + 7) / 8;
 	uint8_t *ptr = NULL;
-	//uint32_t bits = 0;
 
 	/*
 	 * If the data provided for signing
@@ -39,10 +38,8 @@ static keymaster_error_t TA_check_ec_data_size(uint8_t **data, uint32_t *data_l,
 		}
 		*data_l = key_size_bytes;
 		if (key_size < *data_l * 8) {
-			//bits = TA_get_shift_bits(*data, key_size);
-			//if (bits != 0)
 			TA_short_be_rshift(*data, *data_l,
-				8 - (key_size & 0x7)/*bits*/);
+				8 - (key_size & 0x7));
 		}
 	} else {
 		ptr = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
@@ -117,7 +114,7 @@ keymaster_error_t TA_ec_finish(const keymaster_operation_t *operation,
 					digest_out,
 					&digest_out_size);
 			if (res != KM_ERROR_OK) {
-				EMSG("Failed to obtain digest for EC");
+				EMSG("Failed to obtain digest for EC, res=%x", res);
 				break;
 			}
 			in_buf = digest_out;
@@ -148,7 +145,7 @@ keymaster_error_t TA_ec_finish(const keymaster_operation_t *operation,
 				res = TA_encode_ec_sign(*sessionSTA,
 						output->data, out_size);
 				if (res != KM_ERROR_OK) {
-					EMSG("Failed to encode EC sign");
+					EMSG("Failed to encode EC sign, res=%x", res);
 					break;
 				}
 			}
@@ -157,7 +154,7 @@ keymaster_error_t TA_ec_finish(const keymaster_operation_t *operation,
 			res = TA_decode_ec_sign(*sessionSTA, signature,
 								key_size);
 			if (res != KM_ERROR_OK) {
-				EMSG("Failed to decode EC sign");
+				EMSG("Failed to decode EC sign, res=%x", res);
 				break;
 			}
 			res = TEE_AsymmetricVerifyDigest(*operation->operation,

@@ -34,24 +34,77 @@ void TA_free_params(keymaster_key_param_set_t *params)
 	TEE_Free(params->params);
 }
 
+void TA_free_cert_chain(keymaster_cert_chain_t *cert_chain)
+{
+	if (!cert_chain->entries) {
+		return;
+	}
+
+	for (size_t i = 0; i < cert_chain->entry_count; i++) {
+		if (cert_chain->entries[i].data)
+			TEE_Free(cert_chain->entries[i].data);
+	}
+	TEE_Free(cert_chain->entries);
+}
+
 void TA_add_to_params(keymaster_key_param_set_t *params,
 				const uint32_t key_size,
-				const uint64_t rsa_public_exponent)
+				const uint64_t rsa_public_exponent,
+				const uint32_t curve)
 {
-	size_t index = params->length;
-	keymaster_key_param_t param_ks = {
-		.tag = KM_TAG_KEY_SIZE,
-		.key_param.integer = key_size,
-	};
-	keymaster_key_param_t param_rpe = {
-		.tag = KM_TAG_RSA_PUBLIC_EXPONENT,
-		.key_param.integer = rsa_public_exponent,
-	};
+	bool was_added = false;
 
-	params->params[index++] = param_ks;
-	if (rsa_public_exponent != UNDEFINED)
-		params->params[index++] = param_rpe;
-	params->length = index;
+	if (key_size != UNDEFINED) {
+		for (size_t i = 0; i < params->length; i++) {
+			if (params->params[i].tag == KM_TAG_KEY_SIZE) {
+				was_added = true;
+				params->params[i].key_param.integer = key_size;
+				break;
+			}
+		}
+		if (!was_added) {
+			(params->params + params->length)->tag = KM_TAG_KEY_SIZE;
+			(params->params + params->length)->
+					key_param.integer = key_size;
+			params->length++;
+		}
+	}
+
+	if (rsa_public_exponent != UNDEFINED) {
+		was_added = false;
+		for (size_t i = 0; i < params->length; i++) {
+			if (params->params[i].tag == KM_TAG_RSA_PUBLIC_EXPONENT) {
+				was_added = true;
+					params->params[i].key_param.integer = rsa_public_exponent;
+				break;
+			}
+		}
+		if (!was_added) {
+			(params->params + params->length)->tag = KM_TAG_RSA_PUBLIC_EXPONENT;
+			(params->params + params->length)->
+					key_param.integer = rsa_public_exponent;
+			params->length++;
+		}
+	}
+
+	if (curve != UNDEFINED && key_size != UNDEFINED) {
+		was_added = false;
+		for (size_t i = 0; i < params->length; i++) {
+			if (params->params[i].tag == KM_TAG_EC_CURVE) {
+				was_added = true;
+					params->params[i].key_param.enumerated =
+							TA_size_to_ECcurve(key_size);
+				break;
+			}
+		}
+		if (!was_added) {
+			(params->params + params->length)->tag = KM_TAG_EC_CURVE;
+			(params->params + params->length)->
+					key_param.enumerated =
+							TA_size_to_ECcurve(key_size);
+			params->length++;
+		}
+	}
 }
 
 uint32_t get_digest_size(const keymaster_digest_t *digest)
@@ -82,27 +135,30 @@ void TA_push_param(keymaster_key_param_set_t *enforced,
 }
 
 keymaster_error_t TA_parse_params(const keymaster_key_param_set_t params_t,
-				keymaster_algorithm_t *algorithm,
+				keymaster_algorithm_t *key_algorithm,
 				uint32_t *key_size,
-				uint64_t *rsa_public_exponent,
-				keymaster_digest_t *digest,
+				uint64_t *key_rsa_public_exponent,
+				keymaster_digest_t *key_digest,
 				const bool import)
 {
 	bool check_min_mac_length = false;
 	uint32_t min_mac_length = UNDEFINED;
 	uint32_t digest_count = 0;
+	bool is_ec_curve = false;
+	keymaster_ec_curve_t ec_curve = KM_EC_CURVE_UNKNOWN;
+	*key_size = UNDEFINED; /*set default value*/
 
 	for (size_t i = 0; i < params_t.length; i++) {
 		switch ((params_t.params + i)->tag) {
 		case KM_TAG_ALGORITHM:
-			*algorithm = (keymaster_algorithm_t)
+			*key_algorithm = (keymaster_algorithm_t)
 				(params_t.params + i)->key_param.integer;
 			break;
 		case KM_TAG_KEY_SIZE:
 			*key_size = (params_t.params + i)->key_param.integer;
 			break;
 		case KM_TAG_RSA_PUBLIC_EXPONENT:
-			*rsa_public_exponent =
+			*key_rsa_public_exponent =
 				(params_t.params + i)->key_param.long_integer;
 			break;
 		case KM_TAG_BLOCK_MODE:
@@ -118,25 +174,42 @@ keymaster_error_t TA_parse_params(const keymaster_key_param_set_t params_t,
 			break;
 		case KM_TAG_DIGEST:
 			digest_count++;
-			if (*digest == UNDEFINED) {
-				*digest = (keymaster_digest_t)
+			if (*key_digest == UNDEFINED) {
+				*key_digest = (keymaster_digest_t)
 				(params_t.params + i)->key_param.
 							enumerated;
 			}
+			break;
+		case KM_TAG_EC_CURVE:
+			is_ec_curve = true;
+			ec_curve = (keymaster_ec_curve_t)
+					(params_t.params + i)->
+						key_param.enumerated;
 			break;
 		default:
 			DMSG("Unused parameter with TAG = %x",
 					(params_t.params + i)->tag);
 		}
 	}
-	if (*algorithm == KM_ALGORITHM_RSA && (*key_size % 8 != 0 ||
+	//Check:
+	if (*key_algorithm == KM_ALGORITHM_RSA && (*key_size % 8 != 0 ||
 						*key_size > MAX_KEY_RSA)
 						&& !import) {
 		EMSG("RSA key size must be multiple of 8 and less than %u",
 								MAX_KEY_RSA);
 		return KM_ERROR_UNSUPPORTED_KEY_SIZE;
 	}
-	if (*algorithm == KM_ALGORITHM_HMAC && (*key_size % 8 != 0 ||
+	if (*key_algorithm == KM_ALGORITHM_RSA &&
+			*key_rsa_public_exponent == 3 && import) {
+		EMSG("RSA import public exponent '3' doesn't match the key");
+		return KM_ERROR_IMPORT_PARAMETER_MISMATCH;
+	}
+	if (*key_algorithm == KM_ALGORITHM_RSA && *key_size != UNDEFINED
+			&& *key_size > 1024 && import) {
+		EMSG("RSA import key size %d must be less than 1024", *key_size);
+		return KM_ERROR_IMPORT_PARAMETER_MISMATCH;
+	}
+	if (*key_algorithm == KM_ALGORITHM_HMAC && (*key_size % 8 != 0 ||
 						*key_size > MAX_KEY_HMAC ||
 						*key_size < MIN_KEY_HMAC)
 						&& !import) {
@@ -144,26 +217,49 @@ keymaster_error_t TA_parse_params(const keymaster_key_param_set_t params_t,
 						MIN_KEY_HMAC, MAX_KEY_HMAC);
 		return KM_ERROR_UNSUPPORTED_KEY_SIZE;
 	}
-	if (min_mac_length == UNDEFINED && ((*algorithm == KM_ALGORITHM_AES &&
+	if (min_mac_length == UNDEFINED && ((*key_algorithm == KM_ALGORITHM_AES &&
 					check_min_mac_length) ||
-					*algorithm == KM_ALGORITHM_HMAC)) {
+					*key_algorithm == KM_ALGORITHM_HMAC)) {
 		EMSG("Min MAC length must be specified for AES GCM mode and HMAC");
 		return KM_ERROR_MISSING_MIN_MAC_LENGTH;
 	}
-	if (*algorithm == KM_ALGORITHM_AES && check_min_mac_length &&
+	if (*key_algorithm == KM_ALGORITHM_AES && check_min_mac_length &&
 			(min_mac_length % 8 != 0 || min_mac_length < MIN_MML
 			|| min_mac_length > MAX_MML)) {
 		EMSG("Min MAC length must be multiple of 8 in range from 96 to 128");
 		return KM_ERROR_UNSUPPORTED_MIN_MAC_LENGTH;
 	}
-	if (*algorithm == KM_ALGORITHM_HMAC && (min_mac_length % 8 != 0
+	if (*key_algorithm == KM_ALGORITHM_HMAC && (min_mac_length % 8 != 0
 			|| min_mac_length < MIN_MML_HMAC)) {
 		EMSG("Min MAC length must be multiple and at least 64");
 		return KM_ERROR_UNSUPPORTED_MIN_MAC_LENGTH;
 	}
-	if (*algorithm == KM_ALGORITHM_HMAC && digest_count != 1) {
+	if (*key_algorithm == KM_ALGORITHM_HMAC && digest_count != 1) {
 		EMSG("For MAC algorithm only one digest must be specified");
 		return KM_ERROR_UNSUPPORTED_DIGEST;
+	}
+	if (*key_algorithm == KM_ALGORITHM_EC) {
+		/*EC key generation requests may have tag EC_CURVE, KEY_SIZE or both*/
+		if (*key_size != UNDEFINED && is_ec_curve == true) {
+			/*If the request contains both,
+			 * use the curve specified by Tag::EC_CURVE,
+			 * and validate that the specified key size is appropriate*/
+			if (ec_curve != TA_size_to_ECcurve(*key_size)) {
+				EMSG("For EC algorithm specified key size"
+						"is not appropriate for that curve");
+				return KM_ERROR_INVALID_ARGUMENT;
+			} else {
+				*key_size = TA_ECcurve_to_size(ec_curve);
+			}
+		} else if (*key_size == UNDEFINED && is_ec_curve == true) {
+			/*If the request only contains Tag::EC_CURVE, use the specified*/
+			*key_size = TA_ECcurve_to_size(ec_curve);
+		}
+
+		if ((*key_size == 224 || ec_curve == KM_EC_CURVE_P_224) && import) {
+			EMSG("EC import key size must be greater than '224'");
+			return KM_ERROR_IMPORT_PARAMETER_MISMATCH;
+		}
 	}
 	return KM_ERROR_OK;
 }
@@ -194,6 +290,7 @@ keymaster_error_t TA_fill_characteristics(
 	}
 	characteristics->sw_enforced.length = 0;
 	*size = 2 * SIZE_LENGTH; /* room of hw and sw size values */
+
 	for (size_t i = 0; i < params->length; i++) {
 		*size += sizeof(params->params[i]);
 		if (keymaster_tag_get_type(params->params[i].tag) == KM_BIGNUM
@@ -202,6 +299,7 @@ keymaster_error_t TA_fill_characteristics(
 			*size += SIZE_LENGTH;
 			*size += params->params[i].key_param.blob.data_length;
 		}
+
 		switch (params->params[i].tag) {
 		case KM_TAG_INVALID:
 		case KM_TAG_BOOTLOADER_ONLY:
@@ -221,6 +319,7 @@ keymaster_error_t TA_fill_characteristics(
 		case KM_TAG_ALLOW_WHILE_ON_BODY:
 		case KM_TAG_ATTESTATION_CHALLENGE:
 			/* Ignore these. */
+			DMSG("Ignore these TAG %x", params->params[i].tag);
 			break;
 		case KM_TAG_ORIGIN:
 		case KM_TAG_PURPOSE:
@@ -241,6 +340,8 @@ keymaster_error_t TA_fill_characteristics(
 		case KM_TAG_EC_CURVE:
 		case KM_TAG_ECIES_SINGLE_HASH_MODE:
 		case KM_TAG_DIGEST:
+		case KM_TAG_OS_VERSION:
+		case KM_TAG_OS_PATCHLEVEL:
 			TA_push_param(&characteristics->
 				hw_enforced, params->params + i);
 			break;
@@ -262,16 +363,85 @@ keymaster_error_t TA_fill_characteristics(
 		case KM_TAG_CREATION_DATETIME:
 		case KM_TAG_INCLUDE_UNIQUE_ID:
 		case KM_TAG_EXPORTABLE:
-		case KM_TAG_OS_VERSION:
-		case KM_TAG_OS_PATCHLEVEL:
 			TA_push_param(&characteristics->
 				sw_enforced, params->params + i);
 			break;
 		default:
+			DMSG("Unused parameter with TAG = %x",
+					params->params[i].tag);
 			break;
 		}
 	}
 	return KM_ERROR_OK;
+}
+
+inline uint32_t TA_blob_size(const keymaster_blob_t *blob)
+{
+	return BLOB_SIZE(blob);
+}
+
+uint32_t TA_characteristics_size(
+			const keymaster_key_characteristics_t *characteristics)
+{
+	uint32_t size = 0;
+
+	size += SIZE_LENGTH;
+	for (size_t i = 0; i < characteristics->hw_enforced.length; i++) {
+		size += SIZE_OF_ITEM(characteristics->hw_enforced.params);
+		if (keymaster_tag_get_type(characteristics->
+				hw_enforced.params[i].tag) == KM_BIGNUM ||
+		    keymaster_tag_get_type(characteristics->
+				hw_enforced.params[i].tag) == KM_BYTES) {
+			size += TA_blob_size(&((characteristics->hw_enforced.params + i)->
+					key_param.blob));
+		}
+	}
+
+	size += SIZE_LENGTH;
+	for (size_t i = 0; i < characteristics->sw_enforced.length; i++) {
+		size += SIZE_OF_ITEM(characteristics->sw_enforced.params);
+		if (keymaster_tag_get_type(characteristics->
+				sw_enforced.params[i].tag) == KM_BIGNUM ||
+		    keymaster_tag_get_type(characteristics->
+				sw_enforced.params[i].tag) == KM_BYTES) {
+			size += TA_blob_size(&((characteristics->sw_enforced.params + i)->
+					key_param.blob));
+		}
+	}
+
+	return size;
+}
+
+uint32_t TA_param_set_size(
+		const keymaster_key_param_set_t *params)
+{
+	uint32_t size = 0;
+
+	size += SIZE_LENGTH;
+	for (size_t i = 0; i < params->length; i++) {
+		size += SIZE_OF_ITEM(params->params);
+
+		if (keymaster_tag_get_type(params->params[i].tag) == KM_BIGNUM
+				|| keymaster_tag_get_type(params->
+				params[i].tag) == KM_BYTES) {
+			size += TA_blob_size(&(params->params[i].key_param.blob));
+		}
+	}
+
+	return size;
+}
+
+uint32_t TA_cert_chain_size(
+		const keymaster_cert_chain_t *cert_chain)
+{
+	uint32_t size = 0;
+
+	size += SIZE_LENGTH;
+	for (size_t i = 0; i < cert_chain->entry_count; i++) {
+		size += SIZE_LENGTH;
+		size += cert_chain->entries[i].data_length;
+	}
+	return size;
 }
 
 void TA_add_origin(keymaster_key_param_set_t *params_t,
@@ -293,6 +463,86 @@ void TA_add_origin(keymaster_key_param_set_t *params_t,
 		(params_t->params + params_t->length)->tag = KM_TAG_ORIGIN;
 		(params_t->params + params_t->length)->
 						key_param.enumerated = origin;
+		params_t->length++;
+	}
+}
+
+void TA_add_creation_datetime(keymaster_key_param_set_t *params_t, bool replace)
+{
+	bool datetime_added = false;
+	TEE_Time time;
+	TEE_GetSystemTime(&time);
+
+	/*Replace if present*/
+	for (size_t i = 0; i < params_t->length; i++) {
+		if (params_t->params[i].tag == KM_TAG_CREATION_DATETIME) {
+			datetime_added = true;
+			if (replace) {
+				params_t->params[i].key_param.date_time =
+					(uint64_t)(time.seconds * 1000 +
+						   time.millis);
+			}
+			break;
+		}
+	}
+	/*Add parameter*/
+	if (!datetime_added) {
+		(params_t->params + params_t->length)->tag = KM_TAG_CREATION_DATETIME;
+		(params_t->params + params_t->length)->
+						key_param.date_time
+						= (uint64_t)(time.seconds * 1000
+								+ time.millis);
+		params_t->length++;
+	}
+}
+
+void TA_add_os_version_patchlevel(keymaster_key_param_set_t *params_t,
+				  uint32_t os_version,
+				  uint32_t os_patchlevel)
+{
+	size_t i;
+
+	for (i = 0; i < params_t->length; i++) {
+		if (params_t->params[i].tag == KM_TAG_OS_VERSION) {
+			params_t->params[i].key_param.integer = os_version;
+			break;
+		}
+	}
+	if (i == params_t->length) {
+		(params_t->params + params_t->length)->tag = KM_TAG_OS_VERSION;
+		(params_t->params + params_t->length)->
+						key_param.integer = os_version;
+		params_t->length++;
+	}
+
+	for (i = 0; i < params_t->length; i++) {
+		if (params_t->params[i].tag == KM_TAG_OS_PATCHLEVEL) {
+			params_t->params[i].key_param.integer = os_patchlevel;
+			break;
+		}
+	}
+	if (i == params_t->length) {
+		(params_t->params + params_t->length)->tag = KM_TAG_OS_PATCHLEVEL;
+		(params_t->params + params_t->length)->
+						key_param.integer = os_patchlevel;
+		params_t->length++;
+	}
+}
+
+void TA_add_ec_curve(keymaster_key_param_set_t *params_t, uint32_t key_size)
+{
+	bool tag_added = false;
+	keymaster_ec_curve_t curve = TA_size_to_ECcurve(key_size);
+
+	for (size_t i = 0; i < params_t->length; i++) {
+		if (params_t->params[i].tag == KM_TAG_EC_CURVE)
+			tag_added = true;
+	}
+	if (!tag_added) {
+		(params_t->params + params_t->length)->tag = KM_TAG_EC_CURVE;
+		(params_t->params + params_t->length)->
+						key_param.integer =
+							(uint32_t)curve;
 		params_t->length++;
 	}
 }
@@ -426,8 +676,16 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 	}
 
 	if (*algorithm == KM_ALGORITHM_EC &&
-				op_purpose == KM_PURPOSE_ENCRYPT) {
-		EMSG("Decrypt operation is not supported by EC algorithm");
+				(op_purpose == KM_PURPOSE_ENCRYPT ||
+				op_purpose == KM_PURPOSE_DECRYPT)) {
+		EMSG("Decrypt/encrypt operation is not supported by EC algorithm");
+		res = KM_ERROR_UNSUPPORTED_PURPOSE;
+		goto out_cp;
+	}
+	if (*algorithm == KM_ALGORITHM_HMAC &&
+				(op_purpose == KM_PURPOSE_ENCRYPT ||
+				op_purpose == KM_PURPOSE_DECRYPT)) {
+		EMSG("Decrypt/encrypt operation is not supported by HMAC algorithm");
 		res = KM_ERROR_UNSUPPORTED_PURPOSE;
 		goto out_cp;
 	}
@@ -444,7 +702,7 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 		}
 		if (!supported_purpose) {
 			EMSG("Key does not support such purpose");
-			res = KM_ERROR_UNSUPPORTED_PURPOSE;
+			res = KM_ERROR_INCOMPATIBLE_PURPOSE;
 			goto out_cp;
 		}
 	}
@@ -493,7 +751,7 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 				goto out_cp;
 			}
 			*op_digest = (keymaster_digest_t)
-				in_params->params[j].key_param.integer;
+				in_params->params[j].key_param.enumerated;
 			break;
 		case KM_TAG_PADDING:
 			if (*op_padding != UNDEFINED) {
@@ -502,7 +760,7 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 				goto out_cp;
 			}
 			*op_padding = (keymaster_padding_t)
-				in_params->params[j].key_param.integer;
+				in_params->params[j].key_param.enumerated;
 			break;
 		case KM_TAG_NONCE:
 			caller_nonce_fail = !caller_nonce;
@@ -523,25 +781,43 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 				*op_padding == KM_PAD_RSA_PSS) &&
 				op_purpose != KM_PURPOSE_SIGN &&
 				op_purpose != KM_PURPOSE_VERIFY) {
-			EMSG("Padding modes KM_PAD_RSA_PKCS1_1_5_SIGN and KM_PAD_RSA_PSS supports only SIGN and VERIFY purposes");
+			EMSG("Padding modes KM_PAD_RSA_PKCS1_1_5_SIGN and KM_PAD_RSA_PSS "
+			     "supports only SIGN and VERIFY purposes");
 			return KM_ERROR_UNSUPPORTED_PADDING_MODE;
 		} else if ((*op_padding == KM_PAD_RSA_PKCS1_1_5_ENCRYPT ||
 				*op_padding == KM_PAD_RSA_OAEP) &&
 				op_purpose != KM_PURPOSE_ENCRYPT &&
 				op_purpose != KM_PURPOSE_DECRYPT) {
-			EMSG("Padding modes KM_PAD_RSA_PKCS1_1_5_SIGN and KM_PAD_RSA_PSS supports only SIGN and VERIFY purposes");
+			EMSG("Padding modes KM_PAD_RSA_PKCS1_1_5_SIGN and KM_PAD_RSA_PSS "
+			     "supports only SIGN and VERIFY purposes");
 			return KM_ERROR_UNSUPPORTED_PADDING_MODE;
 		}
 		if (*op_padding == KM_PAD_RSA_PSS &&
 				*op_digest == KM_DIGEST_NONE &&
 				get_digest_size(op_digest) + 22 > key_size) {
-			EMSG("RSA padding mode KM_PAD_RSA_PSS can not be used with KM_DIGEST_NONE and key size must be at least 22 bytes larger than digest output size");
+			EMSG("RSA padding mode KM_PAD_RSA_PSS can not be used with "
+			     "KM_DIGEST_NONE and key size must be at least 22 bytes "
+			     "larger than digest output size");
+			return KM_ERROR_INCOMPATIBLE_DIGEST;
+		}
+		if (*op_padding == KM_PAD_RSA_PSS &&
+				(get_digest_size(op_digest) * 2 + 16) > key_size) {
+			EMSG("RSA padding mode KM_PAD_RSA_PSS and key size must be larger than digest output size");
 			return KM_ERROR_INCOMPATIBLE_DIGEST;
 		}
 		if (*op_padding == KM_PAD_RSA_OAEP &&
 				*op_digest == KM_DIGEST_NONE) {
-			EMSG("RSA padding mode KM_PAD_RSA_OAEP can not be used with KM_DIGEST_NONE");
+			EMSG("RSA padding mode KM_PAD_RSA_OAEP can not be used with "
+			     "KM_DIGEST_NONE");
 			return KM_ERROR_INCOMPATIBLE_DIGEST;
+		}
+		if (*op_padding == KM_PAD_PKCS7) {
+			EMSG("RSA padding mode KM_PAD_PKCS7 can not be used");
+			return KM_ERROR_UNSUPPORTED_PADDING_MODE;
+		}
+		if (*op_padding == UNDEFINED) {
+			EMSG("RSA unsupported operation padding");
+			return KM_ERROR_UNSUPPORTED_PADDING_MODE;
 		}
 	}
 	if (soft_fail) {
@@ -559,7 +835,8 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 			if ((op_purpose == KM_PURPOSE_SIGN ||
 					op_purpose == KM_PURPOSE_VERIFY) &&
 					*op_digest != KM_DIGEST_NONE) {
-				EMSG("RSA with padding KM_PAD_NONE and purpose SIGN or VIRIFY must use KM_DIGEST_NONE");
+				EMSG("RSA with padding KM_PAD_NONE and purpose SIGN or VIRIFY "
+				     "must use KM_DIGEST_NONE");
 				res = KM_ERROR_INCOMPATIBLE_DIGEST;
 				goto out_cp;
 			}
@@ -596,6 +873,8 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 		if (*mac_length == UNDEFINED) {
 			if (*algorithm == KM_ALGORITHM_AES) {
 				*mac_length = kMaxGcmTagLength;
+			} else if (*algorithm == KM_ALGORITHM_HMAC) {
+				*mac_length = min_mac_length;/*FIXME*/
 			} else {
 				EMSG("MAC Length must be specified");
 				res = KM_ERROR_MISSING_MAC_LENGTH;
@@ -643,7 +922,7 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 		match = false;
 		if (*op_padding == UNDEFINED) {
 			EMSG("Operation padding is not set");
-			res = KM_ERROR_UNSUPPORTED_PADDING_MODE;
+			res = KM_ERROR_UNSUPPORTED_PURPOSE;
 			goto out_cp;
 		}
 		for (uint32_t i = 0; i < padding_count; i++) {
@@ -685,6 +964,12 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 					&& *op_padding != KM_PAD_PKCS7)) {
 				EMSG("Mode does not compatible with padding");
 				res = KM_ERROR_INCOMPATIBLE_PADDING_MODE;
+				goto out_cp;
+			}
+			if (nonce->data_length > 0 && nonce->data_length != 12 &&
+					nonce->data_length != 16) {
+				EMSG("Wrong nonce length is prohibited %ld", nonce->data_length);
+				res = KM_ERROR_INVALID_NONCE;
 				goto out_cp;
 			}
 		}

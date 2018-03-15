@@ -16,6 +16,8 @@
  */
 
 #include "parsel.h"
+#include "attestation.h"
+#include "generator.h"
 
 /* Deserializers */
 int TA_deserialize_blob(uint8_t *in, const uint8_t *end,
@@ -231,6 +233,7 @@ int TA_serialize_characteristics(uint8_t *out,
 				hw_enforced.params[i].key_param.blob));
 		}
 	}
+
 	TEE_MemMove(out, &characteristics->sw_enforced.length,
 				sizeof(characteristics->sw_enforced.length));
 	out += SIZE_LENGTH;
@@ -266,29 +269,24 @@ int TA_serialize_cert_chain(uint8_t *out,
 
 	if (!cert_chain) {
 		EMSG("Failed to allocate memory for certificate chain entries");
-		*res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+		*res = KM_ERROR_OUTPUT_PARAMETER_NULL;
 		return 0;
 	}
+
 	TEE_MemMove(out, &cert_chain->entry_count,
 				sizeof(cert_chain->entry_count));
 	out += SIZE_LENGTH;
+
 	for (size_t i = 0; i < cert_chain->entry_count; i++) {
 		TEE_MemMove(out, &cert_chain->entries[i].data_length,
 				sizeof(cert_chain->entries[i].data_length));
 		out += SIZE_LENGTH;
-		cert_chain->entries[i].data = TEE_Malloc(
-				cert_chain->entries[i].data_length *
-				SIZE_OF_ITEM(cert_chain->entries[i].data),
-				TEE_MALLOC_FILL_ZERO);
-		if (!cert_chain->entries[i].data) {
-			EMSG("Failed to allocate memory for certificate chain");
-			*res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-			return 0;
-		}
+
 		TEE_MemMove(out, cert_chain->entries[i].data,
 				cert_chain->entries[i].data_length);
 		out += cert_chain->entries[i].data_length;
 	}
+	*res = KM_ERROR_OK;
 	return out - start;
 }
 
@@ -296,13 +294,14 @@ int TA_serialize_param_set(uint8_t *out,
 			const keymaster_key_param_set_t *params)
 {
 	uint8_t *start = out;
-
 	TEE_MemMove(out, &params->length, sizeof(params->length));
 	out += SIZE_LENGTH;
+
 	for (size_t i = 0; i < params->length; i++) {
 		TEE_MemMove(out, params->params + i,
 				SIZE_OF_ITEM(params->params));
 		out += SIZE_OF_ITEM(params->params);
+
 		if (keymaster_tag_get_type(params->params[i].tag) == KM_BIGNUM
 				|| keymaster_tag_get_type(params->
 				params[i].tag) == KM_BYTES) {
@@ -311,4 +310,107 @@ int TA_serialize_param_set(uint8_t *out,
 		}
 	}
 	return out - start;
+}
+
+//Serialize root RSA key-pair (public and private parts)
+TEE_Result TA_serialize_rsa_keypair(uint8_t *out,
+			uint32_t *out_size,
+			const TEE_ObjectHandle key_obj)
+{
+	TEE_Result res = TEE_SUCCESS;
+	uint32_t readSize = 0;
+	uint8_t tmp_key_attr_buf[RSA_KEY_BUFFER_SIZE];
+	uint32_t key_attr_buf_size = RSA_KEY_BUFFER_SIZE;
+
+	//Read root RSA key attributes
+	res = TEE_SeekObjectData(key_obj, 0, TEE_DATA_SEEK_SET);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to seek root RSA key, res=%x", res);
+		return res;
+	}
+
+	*out_size = 0;
+	//Public + Private parts:
+	for (uint32_t i = 0; i < KM_ATTR_COUNT_RSA; i++) {
+		res = TEE_ReadObjectData(key_obj, &key_attr_buf_size, sizeof(uint32_t),
+				&readSize);
+		if (res != TEE_SUCCESS || readSize != sizeof(uint32_t)) {
+			EMSG("Failed to read RSA attribute size, res=%x", res);
+			return res;
+		}
+		if (key_attr_buf_size > RSA_KEY_BUFFER_SIZE) {
+			EMSG("Invalid RSA attribute size %d", key_attr_buf_size);
+			res = TEE_ERROR_BAD_STATE;
+			return res;
+		}
+		res = TEE_ReadObjectData(key_obj, tmp_key_attr_buf, key_attr_buf_size,
+				&readSize);
+		if (res != TEE_SUCCESS || readSize != key_attr_buf_size) {
+			EMSG("Failed to read RSA attribute buffer, res=%x", res);
+			return res;
+		}
+		TEE_MemMove(&out[*out_size], &key_attr_buf_size, sizeof(uint32_t));
+		*out_size += sizeof(uint32_t);
+		TEE_MemMove(&out[*out_size], tmp_key_attr_buf, key_attr_buf_size);
+		*out_size += key_attr_buf_size;
+	}
+
+	return res;
+}
+
+TEE_Result TA_serialize_ec_keypair(uint8_t *out,
+			uint32_t *out_size,
+			const TEE_ObjectHandle key_obj)
+{
+	TEE_Result res = TEE_SUCCESS;
+	uint32_t readSize = 0;
+	uint8_t tmp_key_attr_buf[EC_KEY_BUFFER_SIZE];
+	uint32_t key_attr_buf_size = EC_KEY_BUFFER_SIZE;
+	uint32_t a = 0, a_size = sizeof(uint32_t);
+
+	//Read EC key attributes
+	res = TEE_SeekObjectData(key_obj, 0, TEE_DATA_SEEK_SET);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to seek root EC key, res=%x", res);
+		return res;
+	}
+
+	*out_size = 0;
+	//Public + Private parts:
+	res = TEE_ReadObjectData(key_obj, &a, sizeof(uint32_t), &readSize);
+	if (res != TEE_SUCCESS || readSize != sizeof(uint32_t)) {
+		EMSG("Failed to read EC Curve, res=%x", res);
+		return res;
+	}
+
+	TEE_MemMove(&out[*out_size], &a_size, sizeof(uint32_t));
+	*out_size += sizeof(uint32_t);
+	TEE_MemMove(&out[*out_size], &a, sizeof(uint32_t));
+	*out_size += sizeof(uint32_t);
+
+	for (uint32_t i = 0; i < (KM_ATTR_COUNT_EC - 1); i++) {//skip curve
+		res = TEE_ReadObjectData(key_obj, &key_attr_buf_size,
+				sizeof(uint32_t), &readSize);
+		if (res != TEE_SUCCESS || readSize != sizeof(uint32_t)) {
+			EMSG("Failed to read EC attribute size, res=%x", res);
+			return res;
+		}
+		if (key_attr_buf_size > EC_KEY_BUFFER_SIZE) {
+			EMSG("Invalid EC attribute size %d", key_attr_buf_size);
+			res = TEE_ERROR_BAD_STATE;
+			return res;
+		}
+		res = TEE_ReadObjectData(key_obj, tmp_key_attr_buf,
+				key_attr_buf_size, &readSize);
+		if (res != TEE_SUCCESS || readSize != key_attr_buf_size) {
+			EMSG("Failed to read EC attribute buffer, res=%x", res);
+			return res;
+		}
+		TEE_MemMove(&out[*out_size], &key_attr_buf_size, sizeof(uint32_t));
+		*out_size += sizeof(uint32_t);
+		TEE_MemMove(&out[*out_size], tmp_key_attr_buf, key_attr_buf_size);
+		*out_size += key_attr_buf_size;
+	}
+
+	return res;
 }

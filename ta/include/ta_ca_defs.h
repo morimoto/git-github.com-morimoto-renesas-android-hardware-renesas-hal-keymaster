@@ -141,6 +141,10 @@ typedef enum {
 	KM_TAG_OS_PATCHLEVEL = KM_UINT | 706,          /* Patch level of system (keymaster2) */
 	KM_TAG_UNIQUE_ID = KM_BYTES | 707,             /* Used to provide unique ID in attestation */
 	KM_TAG_ATTESTATION_CHALLENGE = KM_BYTES | 708, /* Used to provide challenge in attestation */
+	KM_TAG_ATTESTATION_APPLICATION_ID = KM_BYTES | 709, /* Used to identify the set of possible
+							     * applications of which one has initiated a
+							     * key attestation
+							     */
 
 	/* Tags used only to provide data to or receive data from operations */
 	KM_TAG_ASSOCIATED_DATA = KM_BYTES | 1000, /* Used to provide associated data for AEAD modes. */
@@ -239,6 +243,7 @@ typedef enum {
  * Supported EC curves, used in ECDSA/ECIES.
  */
 typedef enum {
+    KM_EC_CURVE_UNKNOWN = -1,
     KM_EC_CURVE_P_224 = 0,
     KM_EC_CURVE_P_256 = 1,
     KM_EC_CURVE_P_384 = 2,
@@ -285,7 +290,7 @@ typedef enum {
 } keymaster_purpose_t;
 
 typedef struct {
-	/*const*/ uint8_t* data;
+	uint8_t* data;
 	size_t data_length;
 } keymaster_blob_t;
 
@@ -319,7 +324,7 @@ typedef struct {
 } keymaster_key_characteristics_t;
 
 typedef struct {
-	/*const*/ uint8_t* key_material;
+	uint8_t* key_material;
 	size_t key_material_size;
 } keymaster_key_blob_t;
 

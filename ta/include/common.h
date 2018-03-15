@@ -18,7 +18,7 @@
 #ifndef KEYMASTER_COMMON_H
 #define KEYMASTER_COMMON_H
 
-#define SIZE_LENGTH sizeof(uint64_t)
+#define SIZE_LENGTH sizeof(uint64_t) //TODO: find all of those macros and refactor them
 #define SIZE_OF_ITEM(item) (item ? sizeof(item[0]) : 0)
 #define PARAM_SET_SIZE(parameters) \
             (SIZE_LENGTH + \
@@ -32,8 +32,7 @@
 #define TA_KEYMASTER_UUID { 0xdba51a17, 0x0563, 0x11e7, \
 		{ 0x93, 0xb1, 0x6f, 0xa7, 0xb0, 0x07, 0x1a, 0x51} }
 
-enum gatekeeper_command {
-	KM_CONFIGURE				= 1,
+enum keystore_command {
 	KM_ADD_RNG_ENTROPY			= 2,
 	KM_GENERATE_KEY				= 3,
 	KM_GET_KEY_CHARACTERISTICS		= 4,
@@ -47,11 +46,12 @@ enum gatekeeper_command {
 	KM_UPDATE				= 12,
 	KM_FINISH				= 13,
 	KM_ABORT				= 14,
+	KM_DESTROY_ATT_IDS			= 15,
 /*
  * Please keep this constant consistent with KM_GET_AUTHTOKEN_KEY define that
  * is defined in Gatekeeper
  */
-	KM_GET_AUTHTOKEN_KEY			= 65536,
+	KM_GET_AUTHTOKEN_KEY		= 65536,
 };
 
 typedef enum{

@@ -22,6 +22,7 @@
 #include "common.h"
 #include "ta_ca_defs.h"
 #include "keystore_ta.h"
+#include "attestation.h"
 
 static TEE_TASessionHandle sessionSTA = TEE_HANDLE_NULL;
 static TEE_TASessionHandle session_rngSTA = TEE_HANDLE_NULL;
@@ -39,18 +40,23 @@ TEE_Result TA_CreateEntryPoint(void)
 						   TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE);
 	TA_reset_operations_table();
-	TA_create_secret_key();
+
+	res = TA_create_secret_key();
+	if (res != TEE_SUCCESS) {
+		EMSG("Something wrong with secret key (%x)", res);
+		goto exit;
+	}
 
 	res = TA_InitializeAuthTokenKey();
 	if (res != TEE_SUCCESS) {
-		EMSG("Something wrong with auth_token key");
+		EMSG("Something wrong with authorization token (%x)", res);
 		goto exit;
 	}
 
 	res = TEE_OpenTASession(&asn1_parser_uuid, TEE_TIMEOUT_INFINITE,
 			exp_param_types, params, &sessionSTA, NULL);
 	if (res != TEE_SUCCESS) {
-		EMSG("Failed to create session with static TA (%x)", res);
+		EMSG("Failed to create session with ASN.1 static TA (%x)", res);
 		goto exit;
 	}
 
@@ -75,7 +81,7 @@ void TA_DestroyEntryPoint(void)
 }
 
 TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
-		TEE_Param  params[TEE_NUM_PARAMS] __unused, void **sess_ctx __unused)
+		TEE_Param params[TEE_NUM_PARAMS] __unused, void **sess_ctx __unused)
 {
 	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
 						   TEE_PARAM_TYPE_NONE,
@@ -117,14 +123,15 @@ static uint32_t TA_possibe_size(const uint32_t type, const uint32_t key_size,
 	}
 }
 
-static keymaster_error_t TA_Add_rng_entropy(TEE_Param params[TEE_NUM_PARAMS])
+//Adds caller-provided entropy to the pool
+static keymaster_error_t TA_addRngEntropy(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
 	size_t  in_size = 0;
-	uint8_t *data = NULL;			/* IN */
+	uint8_t *data = NULL;		/* IN */
 	size_t data_length = 0;		/* IN */
-	uint32_t exp_param_types = TEE_PARAM_TYPES(
+	uint32_t sta_param_types = TEE_PARAM_TYPES(
 						TEE_PARAM_TYPE_MEMREF_INPUT,
 						TEE_PARAM_TYPE_NONE,
 						TEE_PARAM_TYPE_NONE,
@@ -162,9 +169,9 @@ static keymaster_error_t TA_Add_rng_entropy(TEE_Param params[TEE_NUM_PARAMS])
 	params_tee[0].memref.buffer = data;
 	params_tee[0].memref.size = data_length;
 	res = TEE_InvokeTACommand(session_rngSTA, TEE_TIMEOUT_INFINITE,
-				CMD_ADD_RNG_ENTROPY, exp_param_types, params_tee, NULL);
+				CMD_ADD_RNG_ENTROPY, sta_param_types, params_tee, NULL);
 	if (res != TEE_SUCCESS) {
-		EMSG("Invoke command for RNG Entropy add failed");
+		EMSG("Invoke command for RNG static TA failed, res=%x", res);
 		goto out;
 	}
 out:
@@ -173,7 +180,8 @@ out:
 	return res;
 }
 
-static keymaster_error_t TA_Generate_key(TEE_Param params[TEE_NUM_PARAMS])
+//Generate new key and specify associated authorizations (key params)
+static keymaster_error_t TA_generateKey(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -182,13 +190,15 @@ static keymaster_error_t TA_Generate_key(TEE_Param params[TEE_NUM_PARAMS])
 	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;		/* IN */
 	keymaster_key_blob_t key_blob = EMPTY_KEY_BLOB;		/* OUT */
 	keymaster_key_characteristics_t characts = EMPTY_CHARACTS;/* OUT */
-	keymaster_algorithm_t algorithm = UNDEFINED;
+	keymaster_algorithm_t key_algorithm = UNDEFINED;
 	keymaster_error_t res = KM_ERROR_OK;
-	keymaster_digest_t digest = UNDEFINED;
-	uint32_t padding = 0;
+	keymaster_digest_t key_digest = UNDEFINED;
+	uint32_t key_buffer_size = 0; //For serialization of generated key
 	uint32_t characts_size = 0;
 	uint32_t key_size = UNDEFINED;
-	uint64_t rsa_public_exponent = UNDEFINED;
+	uint64_t key_rsa_public_exponent = UNDEFINED;
+	uint32_t os_version = 0xFFFFFFFF;
+	uint32_t os_patchlevel = 0xFFFFFFFF;
 
 	in = (uint8_t *) params[0].memref.buffer;
 	in_end = in + params[0].memref.size;
@@ -196,74 +206,91 @@ static keymaster_error_t TA_Generate_key(TEE_Param params[TEE_NUM_PARAMS])
 
 	in += TA_deserialize_param_set(in, in_end, &params_t, false, &res);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
+	memcpy(&os_version, in, sizeof(os_version));
+	in += 4;
+	memcpy(&os_patchlevel, in, sizeof(os_patchlevel));
+	in += 4;
+	/*Add additional parameters*/
 	TA_add_origin(&params_t, KM_ORIGIN_GENERATED, true);
-	if (res != KM_ERROR_OK)
-		goto out;
+	TA_add_creation_datetime(&params_t, true);
+	TA_add_os_version_patchlevel(&params_t, os_version, os_patchlevel);
 
-	res = TA_parse_params(params_t, &algorithm, &key_size,
-					&rsa_public_exponent, &digest, false);
+	//Parse mandatory and optional parameters
+	res = TA_parse_params(params_t, &key_algorithm, &key_size,
+			      &key_rsa_public_exponent, &key_digest, false);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 
 	if (key_size == UNDEFINED) {
 		EMSG("Key size must be specified");
 		res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
-		goto out;
+		goto exit;
 	}
-	if (algorithm == KM_ALGORITHM_RSA &&
-		  rsa_public_exponent == UNDEFINED) {
+	if (key_algorithm == KM_ALGORITHM_RSA &&
+			key_rsa_public_exponent == UNDEFINED) {
 		EMSG("RSA public exponent is missed");
 		res = KM_ERROR_INVALID_ARGUMENT;
-		goto out;
+		goto exit;
 	}
-
+	if (key_algorithm == KM_ALGORITHM_EC) {
+		TA_add_ec_curve(&params_t, key_size);
+	}
+	//Newly-generated key's characteristics divided appropriately
+	//into hardware-enforced and software-enforced lists
+	//(except APPLICATION_ID and APPLICATION_DATA)
 	res = TA_fill_characteristics(&characts, &params_t,
 							&characts_size);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 
-	padding = TA_get_key_size(algorithm);
-	key_blob.key_material_size = characts_size + padding;
+	key_buffer_size = TA_get_key_size(key_algorithm);
+
+	key_blob.key_material_size = characts_size + key_buffer_size;
 	if (key_blob.key_material_size % BLOCK_SIZE != 0) {
 		/* do size alignment */
 		key_blob.key_material_size += BLOCK_SIZE -
 			(key_blob.key_material_size % BLOCK_SIZE);
 	}
+
 	key_material = TEE_Malloc(key_blob.key_material_size,
 						TEE_MALLOC_FILL_ZERO);
 	if (!key_material) {
 		EMSG("Failed to allocate memory for key_material");
 		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-		goto out;
+		goto exit;
 	}
-	res = TA_generate_key(algorithm, key_size, key_material, digest,
-						  rsa_public_exponent);
+	res = TA_generate_key(key_algorithm, key_size, key_material, key_digest,
+			key_rsa_public_exponent);
 	if (res != KM_ERROR_OK) {
-		EMSG("Failed to generate key");
-		goto out;
+		EMSG("Failed to generate key, res=%x", res);
+		goto exit;
 	}
+	//TODO add bind keys to operating system and patch level version
 
-	TA_serialize_param_set(key_material + padding, &params_t);
+	TA_serialize_param_set(key_material + key_buffer_size, &params_t);
+
 	res = TA_encrypt(key_material, key_blob.key_material_size);
 	if (res != KM_ERROR_OK) {
-		EMSG("Failed to encript blob");
-		goto out;
+		EMSG("Failed to encrypt key blob, res=%x", res);
+		goto exit;
 	}
 	key_blob.key_material = key_material;
 
 	out += TA_serialize_key_blob(out, &key_blob);
 	out += TA_serialize_characteristics(out, &characts);
-out:
+exit:
 	if (key_material)
 		TEE_Free(key_material);
 	TA_free_params(&characts.sw_enforced);
 	TA_free_params(&characts.hw_enforced);
 	TA_free_params(&params_t);
+
 	return res;
 }
 
-static keymaster_error_t TA_Get_key_characteristics(
+//Return key parameters and characteristics associated during generation
+static keymaster_error_t TA_getKeyCharacteristics(
 					TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
@@ -288,39 +315,39 @@ static keymaster_error_t TA_Get_key_characteristics(
 
 	in += TA_deserialize_key_blob(in, in_end, &key_blob, &res);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 	in += TA_deserialize_blob(in, in_end, &client_id, true, &res, false);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 	in += TA_deserialize_blob(in, in_end, &app_data, true, &res, false);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 	if (key_blob.key_material_size == 0) {
 		EMSG("Bad key blob");
 		res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
-		goto out;
+		goto exit;
 	}
 	key_material = TEE_Malloc(key_blob.key_material_size,
 						TEE_MALLOC_FILL_ZERO);
 	if (!key_material) {
 		EMSG("Failed to allocate memory for key material");
 		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-		goto out;
+		goto exit;
 	}
 	res = TA_restore_key(key_material, &key_blob, &key_size, &type,
 						 &obj_h, &params_t);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 
 	res = TA_check_permission(&params_t, client_id, app_data, &exportable);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 
 	res = TA_fill_characteristics(&chr, &params_t, &characts_size);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
 	out += TA_serialize_characteristics(out, &chr);
-out:
+exit:
 	if (obj_h != TEE_HANDLE_NULL)
 		TEE_FreeTransientObject(obj_h);
 	if (key_blob.key_material)
@@ -338,7 +365,8 @@ out:
 	return res;
 }
 
-static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
+//Imports key material into Keymaster hardware.
+static keymaster_error_t TA_importKey(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -349,16 +377,16 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 	keymaster_key_blob_t key_blob = EMPTY_KEY_BLOB;/* OUT */
 	keymaster_key_characteristics_t characts = EMPTY_CHARACTS;/* OUT */
 	keymaster_error_t res = KM_ERROR_OK;
-	keymaster_algorithm_t algorithm = UNDEFINED;
-	keymaster_digest_t digest = UNDEFINED;
+	keymaster_algorithm_t key_algorithm = UNDEFINED;
+	keymaster_digest_t key_digest = UNDEFINED;
 	TEE_Attribute *attrs_in = NULL;
 	uint8_t *key_material = NULL;
-	uint32_t padding = 0;
+	uint32_t key_buffer_size = 0;
 	uint32_t characts_size = 0;
 	uint32_t key_size = UNDEFINED;
 	uint32_t attrs_in_count = 0;
 	uint32_t curve = UNDEFINED;
-	uint64_t rsa_public_exponent = UNDEFINED;
+	uint64_t key_rsa_public_exponent = UNDEFINED;
 
 	in = (uint8_t *) params[0].memref.buffer;
 	in_end = in + params[0].memref.size;
@@ -376,20 +404,21 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 	if (res != KM_ERROR_OK)
 		goto out;
 
-	res = TA_parse_params(params_t, &algorithm, &key_size,
-					&rsa_public_exponent, &digest, true);
+	//Parse mandatory and optional parameters
+	res = TA_parse_params(params_t, &key_algorithm, &key_size,
+					&key_rsa_public_exponent, &key_digest, true);
 	if (res != KM_ERROR_OK)
 		goto out;
 	if (key_format == KM_KEY_FORMAT_RAW) {
-		if (algorithm != KM_ALGORITHM_AES &&
-				algorithm != KM_ALGORITHM_HMAC) {
-			EMSG("Only HMAC and AES keys can imported in raw fromat");
+		if (key_algorithm != KM_ALGORITHM_AES &&
+				key_algorithm != KM_ALGORITHM_HMAC) {
+			EMSG("Only HMAC and AES keys can imported in raw format");
 			res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
 		}
 		if (key_size == UNDEFINED)
 			key_size = key_data.data_length * 8;
-		if (algorithm == KM_ALGORITHM_HMAC) {
-			res = TA_check_hmac_key_size(&key_data, digest);
+		if (key_algorithm == KM_ALGORITHM_HMAC) {
+			res = TA_check_hmac_key_size(&key_data, key_digest);
 			if (res != KM_ERROR_OK) {
 				EMSG("HMAC key check failed");
 				goto out;
@@ -406,14 +435,14 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 
 		TEE_InitRefAttribute(attrs_in, TEE_ATTR_SECRET_VALUE,
 				(void *) key_data.data, key_data.data_length);
-		if (algorithm == KM_ALGORITHM_HMAC && (key_size % 8 != 0 ||
+		if (key_algorithm == KM_ALGORITHM_HMAC && (key_size % 8 != 0 ||
 						key_size > MAX_KEY_HMAC ||
 						key_size < MIN_KEY_HMAC)) {
 			EMSG("HMAC key size must be multiple of 8 in range from %d to %d",
 						MIN_KEY_HMAC, MAX_KEY_HMAC);
 			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
 			goto free_attrs;
-		} else if (algorithm == KM_ALGORITHM_AES &&
+		} else if (key_algorithm == KM_ALGORITHM_AES &&
 				key_size != 128 && key_size != 192
 				&& key_size != 256) {
 			EMSG("Unsupported key size! Supported only 128, 192 and 256");
@@ -421,24 +450,24 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 			goto free_attrs;
 		}
 	} else {/* KM_KEY_FORMAT_PKCS8 */
-		if (algorithm != KM_ALGORITHM_RSA &&
-				algorithm != KM_ALGORITHM_EC) {
-			EMSG("Only RSA and EC keys can imported in PKCS8 fromat");
+		if (key_algorithm != KM_ALGORITHM_RSA &&
+				key_algorithm != KM_ALGORITHM_EC) {
+			EMSG("Only TA_serialize_characteristicsRSA and EC keys can imported in PKCS8 fromat");
 			res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
 		}
 		res = TA_decode_pkcs8(sessionSTA, key_data, &attrs_in,
-				&attrs_in_count, algorithm, &key_size,
-				&rsa_public_exponent);
+				&attrs_in_count, key_algorithm, &key_size,
+				&key_rsa_public_exponent);
 		if (res != KM_ERROR_OK)
 			goto out;
-		if (algorithm == KM_ALGORITHM_RSA && (key_size % 8 != 0 ||
+		if (key_algorithm == KM_ALGORITHM_RSA && (key_size % 8 != 0 ||
 						key_size > MAX_KEY_RSA)) {
 			EMSG("RSA key size must be multiple of 8 and less than %u",
 								MAX_KEY_RSA);
 			res = KM_ERROR_UNSUPPORTED_KEY_SIZE;
 			goto out;
 		}
-		if (algorithm == KM_ALGORITHM_EC) {
+		if (key_algorithm == KM_ALGORITHM_EC) {
 			curve = TA_get_curve_nist(key_size);
 			if (curve == UNDEFINED) {
 				EMSG("Failed to get ECC curve nist");
@@ -459,13 +488,13 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 			}
 		}
 	}
-	TA_add_to_params(&params_t, key_size, rsa_public_exponent);
+	TA_add_to_params(&params_t, key_size, key_rsa_public_exponent, curve);
 	res = TA_fill_characteristics(&characts,
 					&params_t, &characts_size);
 	if (res != KM_ERROR_OK)
 		goto out;
-	padding = TA_get_key_size(algorithm);
-	key_blob.key_material_size = characts_size + padding;
+	key_buffer_size = TA_get_key_size(key_algorithm);
+	key_blob.key_material_size = characts_size + key_buffer_size;
 	if (key_blob.key_material_size % BLOCK_SIZE != 0) {
 		/* size alignment */
 		key_blob.key_material_size += BLOCK_SIZE -
@@ -479,13 +508,13 @@ static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS])
 		goto out;
 	}
 
-	res = TA_import_key(algorithm, key_size, key_material, digest,
+	res = TA_import_key(key_algorithm, key_size, key_material, key_digest,
 						attrs_in, attrs_in_count);
 	if (res != KM_ERROR_OK) {
 		EMSG("Failed to import key");
 		goto out;
 	}
-	TA_serialize_param_set(key_material + padding, &params_t);
+	TA_serialize_param_set(key_material + key_buffer_size, &params_t);
 	res = TA_encrypt(key_material, key_blob.key_material_size);
 	if (res != KM_ERROR_OK) {
 		EMSG("Failed to encrypt blob");
@@ -507,10 +536,12 @@ free_attrs:
 	TA_free_params(&characts.hw_enforced);
 	if (key_material)
 		TEE_Free(key_material);
+
 	return res;
 }
 
-static keymaster_error_t TA_Export_key(TEE_Param params[TEE_NUM_PARAMS])
+//Exports a public key from a Keymaster RSA or EC key pair.
+static keymaster_error_t TA_exportKey(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -525,7 +556,7 @@ static keymaster_error_t TA_Export_key(TEE_Param params[TEE_NUM_PARAMS])
 	TEE_ObjectHandle obj_h = TEE_HANDLE_NULL;
 	bool exportable = false;
 	uint8_t *key_material = NULL;
-	uint32_t key_size = 0;
+	uint32_t key_size = UNDEFINED;
 	uint32_t type = 0;
 
 	in = (uint8_t *) params[0].memref.buffer;
@@ -545,6 +576,7 @@ static keymaster_error_t TA_Export_key(TEE_Param params[TEE_NUM_PARAMS])
 	if (res != KM_ERROR_OK)
 		goto out;
 
+	//Keymaster supports export of public keys only in X.509 format
 	if (export_format != KM_KEY_FORMAT_X509) {
 		EMSG("Unsupported key export format");
 		res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
@@ -566,8 +598,8 @@ static keymaster_error_t TA_Export_key(TEE_Param params[TEE_NUM_PARAMS])
 		goto out;
 	if (!exportable && type != TEE_TYPE_RSA_KEYPAIR
 			&& type != TEE_TYPE_ECDSA_KEYPAIR) {
-		res = KM_ERROR_KEY_EXPORT_OPTIONS_INVALID;
-		EMSG("This asymetric key is not exportable");
+		res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
+		EMSG("This key type is not exportable");
 		goto out;
 	}
 	res = TA_encode_key(sessionSTA, &export_data, type, &obj_h, key_size);
@@ -588,56 +620,211 @@ out:
 	if (export_data.data)
 		TEE_Free(export_data.data);
 	TA_free_params(&params_t);
-	return TEE_SUCCESS;
+
+	return res;
 }
 
-static keymaster_error_t TA_Attest_key(TEE_Param params[TEE_NUM_PARAMS])
+static keymaster_error_t TA_attestKey(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
 	uint8_t *out = NULL;
+	uint32_t out_size = 0;
 	keymaster_key_blob_t key_to_attest = EMPTY_KEY_BLOB;/* IN */
 	keymaster_key_param_set_t attest_params = EMPTY_PARAM_SET;/* IN */
 	keymaster_cert_chain_t cert_chain = EMPTY_CERT_CHAIN;/* OUT */
 	keymaster_error_t res = KM_ERROR_OK;
 	keymaster_blob_t *challenge = NULL;
+	bool includeUniqueID = false;
+	bool resetSinceIDRotation = false;
+	keymaster_blob_t *app_id = NULL;
+	keymaster_blob_t *app_data = NULL;
+	keymaster_blob_t *attest_app_id = NULL;
+	bool exportable = false;
+
+	keymaster_key_param_set_t params_t = EMPTY_PARAM_SET;
+	TEE_ObjectHandle attestedKey = TEE_HANDLE_NULL;
+	uint8_t *key_material = NULL;
+	uint32_t key_size = 0;
+	uint32_t key_type = 0;
+
+	keymaster_key_characteristics_t key_chr = EMPTY_CHARACTS;
+	uint32_t key_chr_size = 0;
+	uint8_t verified_boot_state = 0xff;
+
+#ifdef ENUM_PERS_OBJS
+	TA_enum_attest_objs();
+#endif
+#ifdef WIPE_PERS_OBJS
+	TA_wipe_attest_objs();
+#endif
+
+	//This call creates keys/certs only once during first TA run
+	res = TA_create_attest_objs(sessionSTA);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to create attestation objects, res=%x", res);
+		res = KM_ERROR_UNKNOWN_ERROR;
+		goto exit;
+	}
 
 	in = (uint8_t *) params[0].memref.buffer;
 	in_end = in + params[0].memref.size;
 	out = (uint8_t *) params[1].memref.buffer;
+	out_size = params[1].memref.size; //limited to 8192
+
+	//Key blob for which the attestation will be created
 
 	in += TA_deserialize_key_blob(in, in_end, &key_to_attest, &res);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
+
+	if (key_to_attest.key_material_size == 0) {
+			EMSG("Bad attestation key blob");
+			res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
+			goto exit;
+	}
+
+	key_material = TEE_Malloc(key_to_attest.key_material_size,
+						TEE_MALLOC_FILL_ZERO);
+	if (!key_material) {
+		EMSG("Failed to allocate memory for key material");
+		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+		goto exit;
+	}
+
+	//Deserialize parameters necessary for attestation
 	in += TA_deserialize_param_set(in, in_end, &attest_params, false, &res);
 	if (res != KM_ERROR_OK)
-		goto out;
+		goto exit;
+	verified_boot_state = *in;
 
 	for (size_t i = 0; i < attest_params.length; i++) {
-		if (attest_params.params[i].tag ==
-					KM_TAG_ATTESTATION_CHALLENGE) {
+		switch (attest_params.params[i].tag) {
+		case KM_TAG_APPLICATION_ID:
+			app_id = &attest_params.params[i].key_param.blob;
+			break;
+		case KM_TAG_APPLICATION_DATA:
+			app_data = &attest_params.params[i].key_param.blob;
+			break;
+		case KM_TAG_ATTESTATION_CHALLENGE:
 			challenge = &attest_params.params[i].key_param.blob;
-			if (challenge->data_length >
-					MAX_ATTESTATION_CHALLENGE) {
-				EMSG("Challenge is too big");
+			if (challenge->data_length > MAX_ATTESTATION_CHALLENGE) {
+				EMSG("Attestation challenge is too big");
 				res = KM_ERROR_INVALID_INPUT_LENGTH;
-				goto out;
+				goto exit;
 			}
+			break;
+		case KM_TAG_INCLUDE_UNIQUE_ID:
+			includeUniqueID = attest_params.params[i].key_param.boolean;
+			break;
+		case KM_TAG_RESET_SINCE_ID_ROTATION:
+			resetSinceIDRotation = attest_params.params[i].key_param.boolean;
+			break;
+		case KM_TAG_ATTESTATION_APPLICATION_ID:
+			attest_app_id = &attest_params.params[i].key_param.blob;
+			break;
+		default:
+			DMSG("Unused attestation parameter tag %x", attest_params.params[i].tag);
+			break;
 		}
 	}
-	/* TODO Attest key */
 
-	out += TA_serialize_cert_chain(out, &cert_chain, &res);
+	(void)attest_app_id;
+	(void)resetSinceIDRotation;
+	if (challenge == NULL) {
+		EMSG("Attestation challenge is missing");
+		res = KM_ERROR_ATTESTATION_CHALLENGE_MISSING;
+		goto exit;
+	}
+
+	//Restore key
+	res = TA_restore_key(key_material, &key_to_attest,
+						&key_size, &key_type,
+						&attestedKey, &params_t);
 	if (res != KM_ERROR_OK)
-		goto out;
-out:
-	TA_free_params(&attest_params);
+		goto exit;
+
+	if (app_id != NULL && app_data != NULL) {//TODO
+		res = TA_check_permission(&params_t, *app_id, *app_data, &exportable);
+		if (res != KM_ERROR_OK)
+			goto exit;
+	}
+
+	//Check attested key type
+	if (key_type != TEE_TYPE_RSA_KEYPAIR
+			&& key_type != TEE_TYPE_ECDSA_KEYPAIR) {
+		EMSG("Key attestation supports only asymmetric key pairs, type=%x", key_type);
+		res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
+		goto exit;
+	}
+
+	res = TA_fill_characteristics(&key_chr, &params_t, &key_chr_size);
+	if (res != KM_ERROR_OK)
+		goto exit;
+
+	if (includeUniqueID == true) {//TODO
+		//TA_generate_UniqueID(...);
+	}
+
+	//Allocate memory for chain of certificates
+	//NOTE: current impl support only 2 certificates in chain
+	cert_chain.entries = TEE_Malloc(
+			sizeof(keymaster_blob_t)*ATT_CERT_CHAIN_LEN,
+			TEE_MALLOC_FILL_ZERO);
+	if (!cert_chain.entries) {
+		EMSG("Failed to allocate memory for chain of certificates");
+		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+		goto exit;
+	}
+	cert_chain.entry_count = ATT_CERT_CHAIN_LEN;
+
+	//Generate key attestation certificate (using STA ASN.1)
+	res = TA_gen_key_attest_cert(sessionSTA, key_type, attestedKey,
+				     &attest_params, &key_chr, &cert_chain,
+				     verified_boot_state);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to gen key att cert, res=%x", res);
+		goto exit;
+	}
+	//Read Root attestation certificate (must be generated and stored before)
+	res = TA_read_root_attest_cert(key_type, &cert_chain);
+	if (res != TEE_SUCCESS) {
+		EMSG("Failed to read root att cert, res=%x", res);
+		goto exit;
+	}
+	//Check output buffer length
+	if (TA_cert_chain_size(&cert_chain) > out_size) {
+		EMSG("Short output buffer for chain of certificates");
+		res = KM_ERROR_INSUFFICIENT_BUFFER_SPACE;
+		goto exit;
+	}
+	//Serialize output chain of certificates
+	TA_serialize_cert_chain(out, &cert_chain, &res);
+	if (res != KM_ERROR_OK) {
+		EMSG("Failed to serialize output chain of certificates, res=%x", res);
+		goto exit;
+	}
+
+exit:
 	if (key_to_attest.key_material)
 		TEE_Free(key_to_attest.key_material);
+
+	if (attestedKey != TEE_HANDLE_NULL)
+		TEE_FreeTransientObject(attestedKey);
+
+	if (key_material)
+		TEE_Free(key_material);
+
+	TA_free_params(&attest_params);
+	TA_free_params(&key_chr.sw_enforced);
+	TA_free_params(&key_chr.hw_enforced);
+	TA_free_params(&params_t);
+	TA_free_cert_chain(&cert_chain);
+
 	return res;
 }
 
-static keymaster_error_t TA_Upgrade_key(TEE_Param params[TEE_NUM_PARAMS])
+static keymaster_error_t TA_upgradeKey(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -669,33 +856,32 @@ out:
 	return res;
 }
 
-static keymaster_error_t TA_Delete_key(TEE_Param params[TEE_NUM_PARAMS])
+//Deletes the provided key
+static keymaster_error_t TA_deleteKey(TEE_Param params[TEE_NUM_PARAMS])
 {
-	uint8_t *in = NULL;
-	uint8_t *in_end = NULL;
-	keymaster_key_blob_t key = EMPTY_KEY_BLOB;		/* IN */
-	keymaster_error_t res = KM_ERROR_OK;
-
-	/* TODO Delete Key */
-
-	in = (uint8_t *) params[0].memref.buffer;
-	in_end = in + params[0].memref.size;
-
-	in += TA_deserialize_key_blob(in, in_end, &key, &res);
-
-	if (key.key_material)
-		TEE_Free(key.key_material);
-	return res;
+	(void)&params[0];
+	return KM_ERROR_OK;
 }
 
-static keymaster_error_t TA_Delete_all_keys(TEE_Param params[TEE_NUM_PARAMS])
+//Deletes all keys
+static keymaster_error_t TA_deleteAllKeys(TEE_Param params[TEE_NUM_PARAMS])
+{
+	(void)&params[0];
+	return KM_ERROR_OK;
+}
+
+//Permanently disable the ID attestation feature.
+static keymaster_error_t TA_destroyAttestationIds(TEE_Param params[TEE_NUM_PARAMS])
 {
 	(void)&params[0];
 	/* TODO Delete all keys */
 	return KM_ERROR_OK;
 }
 
-static keymaster_error_t TA_Begin(TEE_Param params[TEE_NUM_PARAMS])
+//Begins a cryptographic operation, using the specified key, for the specified purpose,
+//with the specified parameters (as appropriate), and returns an operation handle that
+//is used with update and finish to complete the operation.
+static keymaster_error_t TA_begin(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -826,7 +1012,7 @@ static keymaster_error_t TA_Begin(TEE_Param params[TEE_NUM_PARAMS])
 	}
 	res = TA_start_operation(operation_handle, key, min_sec,
 					operation, purpose, digest_op, do_auth,
-					padding, mode, mac_length, nonce);
+					padding, mode, mac_length,nonce);
 	if (res != KM_ERROR_OK)
 		goto out;
 	out += TA_serialize_param_set(out, &out_params);
@@ -852,7 +1038,8 @@ out:
 	return res;
 }
 
-static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
+//Provides data to process in an ongoing operation started with begin.
+static keymaster_error_t TA_update(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -906,7 +1093,7 @@ static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS])
 		}
 	}
 
-	if (input.data_length != 0)
+	if (input.data_length != 0 && type == TEE_TYPE_RSA_KEYPAIR)
 		operation.got_input = true;
 	out_size = TA_possibe_size(type, key_size, input, 0);
 	output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
@@ -962,7 +1149,9 @@ out:
 	return res;
 }
 
-static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
+//Finishes an ongoing operation started with begin, processing all
+//of the as-yet-unprocessed data provided by update(s).
+static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -1048,19 +1237,27 @@ static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS])
 						input.data_length,
 						output.data,
 						&out_size);
+			/*Trim out size to KM_TAG_MAC_LENGTH*/
+			if (operation.mac_length != UNDEFINED) {
+				if (out_size > operation.mac_length / 8) {
+					DMSG("Trim HMAC out size to %d", operation.mac_length);
+					out_size = operation.mac_length / 8;
+				}
+			}
 		} else {/* KM_PURPOSE_VERIFY */
 			res = TEE_MACCompareFinal(*operation.operation,
 						input.data,
 						input.data_length,
 						signature.data,
 						signature.data_length);
+			out_size = 0;
 			/* Convert error code to Android style */
 			if (res == (int) TEE_ERROR_MAC_INVALID)
 				res = KM_ERROR_VERIFICATION_FAILED;
 		}
 	}
 	if (res != TEE_SUCCESS) {
-		EMSG("Operation failed with error code %x", res);
+		EMSG("Finish operation failed with error code %x", res);
 		goto out;
 	}
 	output.data_length = out_size;
@@ -1085,7 +1282,8 @@ out:
 	return res;
 }
 
-static keymaster_error_t TA_Abort(TEE_Param params[TEE_NUM_PARAMS])
+//Aborts the in-progress operation
+static keymaster_error_t TA_abort(TEE_Param params[TEE_NUM_PARAMS])
 {
 	uint8_t *in = NULL;
 	uint8_t *in_end = NULL;
@@ -1098,7 +1296,7 @@ static keymaster_error_t TA_Abort(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_op_handle(in, in_end, &operation_handle, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	TA_abort_operation(operation_handle);
+	res = TA_abort_operation(operation_handle);
 out:
 	return res;
 }
@@ -1113,41 +1311,45 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __unused,
 			TEE_PARAM_TYPE_NONE,
 			TEE_PARAM_TYPE_NONE);
 	if (param_types != exp_param_types) {
-		EMSG("Wrong parameters");
+		EMSG("Keystore TA wrong parameters");
 		return KM_ERROR_SECURE_HW_COMMUNICATION_FAILED;
 	}
 
-	DMSG("Keymaster TA invoke command cmd_id %u", cmd_id);
-
 	switch(cmd_id) {
+	//Keymaster commands:
 	case KM_ADD_RNG_ENTROPY:
-		return TA_Add_rng_entropy(params);
+		return TA_addRngEntropy(params);
 	case KM_GENERATE_KEY:
-		return TA_Generate_key(params);
+		return TA_generateKey(params);
 	case KM_GET_KEY_CHARACTERISTICS:
-		return TA_Get_key_characteristics(params);
+		return TA_getKeyCharacteristics(params);
 	case KM_IMPORT_KEY:
-		return TA_Import_key(params);
+		return TA_importKey(params);
 	case KM_EXPORT_KEY:
-		return TA_Export_key(params);
+		return TA_exportKey(params);
 	case KM_ATTEST_KEY:
-		return TA_Attest_key(params);
+		return TA_attestKey(params);
 	case KM_UPGRADE_KEY:
-		return TA_Upgrade_key(params);
+		return TA_upgradeKey(params);
 	case KM_DELETE_KEY:
-		return TA_Delete_key(params);
+		return TA_deleteKey(params);
 	case KM_DELETE_ALL_KEYS:
-		return TA_Delete_all_keys(params);
+		return TA_deleteAllKeys(params);
+	case KM_DESTROY_ATT_IDS:
+		return TA_destroyAttestationIds(params);
 	case KM_BEGIN:
-		return TA_Begin(params);
+		return TA_begin(params);
 	case KM_UPDATE:
-		return TA_Update(params);
+		return TA_update(params);
 	case KM_FINISH:
-		return TA_Finish(params);
+		return TA_finish(params);
 	case KM_ABORT:
-		return TA_Abort(params);
+		return TA_abort(params);
+
+	//Gatekeeper commands:
 	case KM_GET_AUTHTOKEN_KEY:
 		return TA_GetAuthTokenKey(params);
+
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;
 	}

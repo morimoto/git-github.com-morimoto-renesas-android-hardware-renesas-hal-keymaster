@@ -47,6 +47,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libhidltransport \
 	libhardware \
 	libutils \
+	libcutils \
 	android.hardware.keymaster@3.0
 
 include $(BUILD_EXECUTABLE)

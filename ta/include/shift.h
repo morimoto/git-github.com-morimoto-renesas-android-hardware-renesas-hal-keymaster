@@ -24,9 +24,6 @@
 
 #define BITS_IN_BYTE 8
 
-/*int32_t TA_get_shift_bits(const uint8_t *data,
-			const uint32_t key_size);*/
-
 /* Right shift of number stored as big endian
  * Short means that max bits to shift is 8
  */

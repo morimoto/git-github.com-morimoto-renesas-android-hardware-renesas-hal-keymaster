@@ -107,30 +107,31 @@ static uint32_t TA_possibe_size(const uint32_t type,
 				const uint32_t tag_len);
 
 
-static keymaster_error_t TA_Add_rng_entropy(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_addRngEntropy(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Generate_key(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_generateKey(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Get_key_characteristics(
-					TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_getKeyCharacteristics(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Import_key(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_importKey(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Export_key(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_exportKey(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Attest_key(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_attestKey(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Upgrade_key(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_upgradeKey(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Delete_key(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_deleteKey(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Delete_all_keys(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_deleteAllKeys(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Begin(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_destroyAttestationIds(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Update(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_begin(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Finish(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_update(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_Abort(TEE_Param params[TEE_NUM_PARAMS]);
+static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS]);
+
+static keymaster_error_t TA_abort(TEE_Param params[TEE_NUM_PARAMS]);
 #endif  /* ANDROID_OPTEE_KEYSTORE_TA_H */

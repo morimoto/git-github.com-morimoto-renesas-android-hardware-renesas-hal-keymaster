@@ -16,18 +16,6 @@
  */
 #include "shift.h"
 
-/*int32_t TA_get_shift_bits(const uint8_t *data,
-			const uint32_t key_size)
-{
-	uint8_t byte = data[0];
-	uint32_t i;
-
-	for (i = 0; i <= BITS_IN_BYTE && byte != 0; i++) {
-		byte >>= 1;
-	}
-	return i - key_size % BITS_IN_BYTE;
-}*/
-
 void TA_short_be_rshift(uint8_t *data,
 			const uint32_t data_l,
 			const uint32_t shift)

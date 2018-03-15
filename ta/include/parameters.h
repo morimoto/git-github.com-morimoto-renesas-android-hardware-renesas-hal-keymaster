@@ -65,20 +65,39 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 void TA_push_param(keymaster_key_param_set_t *params,
 			const keymaster_key_param_t *param);
 
-keymaster_error_t TA_parse_params(const keymaster_key_param_set_t params,
-				keymaster_algorithm_t *algorithm,
+keymaster_error_t TA_parse_params(const keymaster_key_param_set_t params_t,
+				keymaster_algorithm_t *key_algorithm,
 				uint32_t *key_size,
-				uint64_t *rsa_public_exponent,
-				keymaster_digest_t *digest,
+				uint64_t *key_rsa_public_exponent,
+				keymaster_digest_t *key_digest,
 				const bool import);
 
 keymaster_error_t TA_fill_characteristics(
-			keymaster_key_characteristics_t *chararecteristics,
+			keymaster_key_characteristics_t *characteristics,
 			const keymaster_key_param_set_t *params,
 			uint32_t *size);
 
+uint32_t TA_blob_size(const keymaster_blob_t *blob);
+
+uint32_t TA_characteristics_size(
+			const keymaster_key_characteristics_t *characteristics);
+
+uint32_t TA_param_set_size(
+		const keymaster_key_param_set_t *params);
+
+uint32_t TA_cert_chain_size(
+		const keymaster_cert_chain_t *cert_chain);
+
 void TA_add_origin(keymaster_key_param_set_t *params_t,
 		const keymaster_key_origin_t origin, const bool replace_origin);
+
+void TA_add_creation_datetime(keymaster_key_param_set_t *params_t, bool replace);
+
+void TA_add_os_version_patchlevel(keymaster_key_param_set_t *params_t,
+				  uint32_t os_version,
+				  uint32_t os_patchlevel);
+
+void TA_add_ec_curve(keymaster_key_param_set_t *params_t, uint32_t key_size);
 
 bool cmpBlobParam(const keymaster_blob_t blob,
 			const keymaster_key_param_t param);
@@ -87,8 +106,44 @@ bool is_origination_purpose(const keymaster_purpose_t purpose);
 
 void TA_add_to_params(keymaster_key_param_set_t *params,
 				const uint32_t key_size,
-				const uint64_t rsa_public_exponent);
+				const uint64_t rsa_public_exponent,
+				const uint32_t curve);
 
 void TA_free_params(keymaster_key_param_set_t *params);
+
+void TA_free_cert_chain(keymaster_cert_chain_t *cert_chain);
+
+
+inline keymaster_ec_curve_t TA_size_to_ECcurve(uint32_t key_size)
+{
+	switch (key_size) {
+	case 224:
+		return KM_EC_CURVE_P_224;
+	case 256:
+		return KM_EC_CURVE_P_256;
+	case 384:
+		return KM_EC_CURVE_P_384;
+	case 521:
+		return KM_EC_CURVE_P_521;
+	default:
+		return KM_EC_CURVE_UNKNOWN;
+	}
+}
+
+inline uint32_t TA_ECcurve_to_size(keymaster_ec_curve_t curve)
+{
+	switch (curve) {
+	case KM_EC_CURVE_P_224:
+		return 224;
+	case KM_EC_CURVE_P_256:
+		return 256;
+	case KM_EC_CURVE_P_384:
+		return 384;
+	case KM_EC_CURVE_P_521:
+		return 521;
+	default:
+		return UNDEFINED;
+	}
+}
 
 #endif/* ANDROID_OPTEE_PARAMETERS_H */

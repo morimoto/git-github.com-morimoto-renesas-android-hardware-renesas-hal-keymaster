@@ -95,7 +95,11 @@ private:
     int getParamSetBlobSize(const KmParamSet &paramSet);
     int getParamSetSize(const KmParamSet &paramSet);
     int getBlobSize(const keymaster_blob_t &blob);
-	int getKeyBlobSize(const keymaster_key_blob_t &keyBlob);
+    int getKeyBlobSize(const keymaster_key_blob_t &keyBlob);
+
+    int osVersion(uint32_t *in);
+    int osPatchlevel(uint32_t *in);
+    int verifiedBootState(uint8_t *in);
 
     /*Serializers*/
     int serializeData(uint8_t *dest, const size_t count,

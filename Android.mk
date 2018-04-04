@@ -55,11 +55,11 @@ include $(BUILD_EXECUTABLE)
 # Build keymaster HAL TA                                                       #
 ################################################################################
 
-include $(TARGET_DEVICE_DIR)/build/ta_clear_vars.mk
 # Please keep this variable consistent with TA_KEYMASTER_UUID define that
 # defined in ta/include/common.h file
 TA_UUID:=dba51a17-0563-11e7-93b16fa7b0071a51
 TA_SRC:=$(LOCAL_PATH)/ta
 
-include $(TARGET_DEVICE_DIR)/build/ta_build_executable.mk
+include $(LOCAL_PATH)/ta/build_executable.mk
+
 endif # Include only for Renesas ones.

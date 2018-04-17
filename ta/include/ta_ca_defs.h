@@ -37,17 +37,17 @@ extern "C" {
  * 16 data types.  These values are ORed with tag IDs to generate the final tag ID values.
  */
 typedef enum {
-	KM_INVALID = 0 << 28, /* Invalid type, used to designate a tag as uninitialized */
-	KM_ENUM = 1 << 28,
-	KM_ENUM_REP = 2 << 28, /* Repeatable enumeration value. */
-	KM_UINT = 3 << 28,
-	KM_UINT_REP = 4 << 28, /* Repeatable integer value */
-	KM_ULONG = 5 << 28,
-	KM_DATE = 6 << 28,
-	KM_BOOL = 7 << 28,
-	KM_BIGNUM = 8 << 28,
-	KM_BYTES = 9 << 28,
-	KM_ULONG_REP = 10 << 28, /* Repeatable long value */
+	KM_INVALID = (int)0u << 28, /* Invalid type, used to designate a tag as uninitialized */
+	KM_ENUM = (int)1u << 28,
+	KM_ENUM_REP = (int)2u << 28, /* Repeatable enumeration value. */
+	KM_UINT = (int)3u << 28,
+	KM_UINT_REP = (int)4u << 28, /* Repeatable integer value */
+	KM_ULONG = (int)5u << 28,
+	KM_DATE = (int)6u << 28,
+	KM_BOOL = (int)7u << 28,
+	KM_BIGNUM = (int)(8u << 28),
+	KM_BYTES = (int)(9u << 28),
+	KM_ULONG_REP = (int)(10u << 28), /* Repeatable long value */
 } keymaster_tag_type_t;
 
 typedef enum {

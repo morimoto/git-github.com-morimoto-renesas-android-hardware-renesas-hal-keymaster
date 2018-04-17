@@ -114,7 +114,7 @@ void TA_free_params(keymaster_key_param_set_t *params);
 void TA_free_cert_chain(keymaster_cert_chain_t *cert_chain);
 
 
-inline keymaster_ec_curve_t TA_size_to_ECcurve(uint32_t key_size)
+static inline keymaster_ec_curve_t TA_size_to_ECcurve(uint32_t key_size)
 {
 	switch (key_size) {
 	case 224:

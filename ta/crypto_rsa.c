@@ -375,6 +375,7 @@ keymaster_error_t TA_rsa_update(keymaster_operation_t *operation,
 			output->data_length = *out_size;
 			break;
 		}
+		__attribute__((fallthrough));
 	case KM_PURPOSE_VERIFY:
 	case KM_PURPOSE_SIGN:
 		if (*operation->digest_op != TEE_HANDLE_NULL) {

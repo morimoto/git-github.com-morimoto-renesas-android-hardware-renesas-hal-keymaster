@@ -174,6 +174,8 @@ const char* keymaster_error_message(uint32_t error) {
             return "Key requeres upgrade";
         case (KM_ERROR_ATTESTATION_CHALLENGE_MISSING):
             return "Attestation challenge missing";
+        case (KM_ERROR_ATTESTATION_APPLICATION_ID_MISSING):
+            return "Attestation application ID missing";
         case (KM_ERROR_KEYMASTER_NOT_CONFIGURED):
             return "Keymaster is not configured";
         case (KM_ERROR_UNIMPLEMENTED):

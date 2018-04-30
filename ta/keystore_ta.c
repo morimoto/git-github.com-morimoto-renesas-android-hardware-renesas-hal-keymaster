@@ -729,11 +729,15 @@ static keymaster_error_t TA_attestKey(TEE_Param params[TEE_NUM_PARAMS])
 		}
 	}
 
-	(void)attest_app_id;
 	(void)resetSinceIDRotation;
 	if (challenge == NULL) {
 		EMSG("Attestation challenge is missing");
 		res = KM_ERROR_ATTESTATION_CHALLENGE_MISSING;
+		goto exit;
+	}
+	if (attest_app_id == NULL) {
+		EMSG("Attestation application ID is missing");
+		res = KM_ERROR_ATTESTATION_APPLICATION_ID_MISSING;
 		goto exit;
 	}
 
@@ -754,7 +758,7 @@ static keymaster_error_t TA_attestKey(TEE_Param params[TEE_NUM_PARAMS])
 	if (key_type != TEE_TYPE_RSA_KEYPAIR
 			&& key_type != TEE_TYPE_ECDSA_KEYPAIR) {
 		EMSG("Key attestation supports only asymmetric key pairs, type=%x", key_type);
-		res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
+		res = KM_ERROR_INCOMPATIBLE_ALGORITHM;
 		goto exit;
 	}
 

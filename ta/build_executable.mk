@@ -13,13 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Android build top/root directory
-ANDROID_ROOT            := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../../..)
+TA_OUT_INTERMEDIATES    := $(abspath $(PRODUCT_OUT)/obj/TA_OBJ)
+OPTEE_OUT               := $(abspath $(PRODUCT_OUT)/obj/OPTEE_OBJ)
 
-TA_OUT_INTERMEDIATES    := $(ANDROID_ROOT)/$(OUT_DIR)/target/product/$(TARGET_PRODUCT)/obj/TA_OBJ
-OPTEE_OUT               := $(ANDROID_ROOT)/$(OUT_DIR)/target/product/$(TARGET_PRODUCT)/obj/OPTEE_OBJ
-
-OPTEE_CROSS_COMPILE     := $(ANDROID_ROOT)/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-7.1.1/bin/aarch64-linux-gnu-
+OPTEE_CROSS_COMPILE     := $(abspath ./prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-7.1.1/bin/aarch64-linux-gnu-)
 
 ###########################################################
 ## Rules for building Trusted Application (TA)           ##

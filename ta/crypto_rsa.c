@@ -146,8 +146,12 @@ keymaster_error_t TA_rsa_finish(keymaster_operation_t *operation,
 		in_buf_l = digest_out_size;
 	} else {
 		res = TA_append_sf_data(input, operation, is_input_ext);
-		if (res != KM_ERROR_OK)
+		if (res != KM_ERROR_OK) {
+			/* Fixing too big input data allocation */
+			if (input->data_length > key_size / 8)
+				res = KM_ERROR_INVALID_INPUT_LENGTH;
 			goto out;
+		}
 		/* No need to change output size when stored data is appended */
 		in_buf = input->data;
 		in_buf_l = input->data_length;

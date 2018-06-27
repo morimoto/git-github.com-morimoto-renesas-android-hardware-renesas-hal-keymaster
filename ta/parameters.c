@@ -1001,7 +1001,7 @@ keymaster_error_t TA_check_params(keymaster_key_blob_t *key,
 			goto out_cp;
 	}
 	if (max_uses != UNDEFINED) {
-		res = TA_count_key_uses(*key, max_uses);
+		res = TA_count_key_uses(key, max_uses);
 		if (res != KM_ERROR_OK)
 			goto out_cp;
 	}

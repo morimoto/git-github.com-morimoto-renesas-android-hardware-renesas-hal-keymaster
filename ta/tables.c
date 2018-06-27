@@ -17,35 +17,56 @@
 
 #include "tables.h"
 
+/* Could have fixed length in future */
 static keymaster_use_timer_t use_timers[KM_MAX_USE_TIMERS];
 static keymaster_use_counter_t use_counters[KM_MAX_USE_COUNTERS];
 static uint32_t in_use_c;
 
-keymaster_error_t TA_count_key_uses(const keymaster_key_blob_t key,
+static int deep_key_copy(keymaster_key_blob_t *to,
+			 const keymaster_key_blob_t *from)
+{
+	to->key_material_size = from->key_material_size;
+	to->key_material = TEE_Malloc(from->key_material_size, TEE_MALLOC_FILL_ZERO);
+	if (to->key_material != NULL) {
+		TEE_MemMove(to->key_material, from->key_material, from->key_material_size);
+		return 1;
+	}
+
+	return 0;
+}
+
+keymaster_error_t TA_count_key_uses(const keymaster_key_blob_t *key,
 				const uint32_t max_uses)
 {
-	/*FIXME - no decrement*/
-	if (in_use_c < KM_MAX_USE_COUNTERS) {
-		use_counters[in_use_c].key = key;
-		use_counters[in_use_c].count = 0;
-		in_use_c++;
-	} else {
+	uint32_t i;
+
+	if (in_use_c == KM_MAX_USE_COUNTERS) {
 		return KM_ERROR_TOO_MANY_OPERATIONS;
 	}
 
-	for (uint32_t i = 0; i < in_use_c; i++) {
-		if (key.key_material_size !=
+	for (i = 0; i < in_use_c; i++) {
+		if (key->key_material_size !=
 				use_counters[i].key.key_material_size)
 			continue;
-		if (!TEE_MemCompare(key.key_material,
+
+		if (!TEE_MemCompare(key->key_material,
 				use_counters[i].key.key_material,
-				key.key_material_size)) {
+				key->key_material_size)) {
 			if (use_counters[i].count < max_uses) {
 				use_counters[i].count++;
 				break;
 			}
 			EMSG("Reached max key use count!");
 			return KM_ERROR_KEY_MAX_OPS_EXCEEDED;
+		}
+	}
+
+	if (i == in_use_c) {
+		if (deep_key_copy(&use_counters[in_use_c].key, key)) {
+			use_counters[in_use_c].count = 1;
+			in_use_c++;
+		} else {
+			return KM_ERROR_MEMORY_ALLOCATION_FAILED;
 		}
 	}
 	return KM_ERROR_OK;
@@ -60,6 +81,9 @@ void TA_clean_timers(void)
 		if (use_timers[i].last_access.seconds != 0 &&
 				use_timers[i].last_access.seconds +
 				use_timers[i].min_sec > cur_t.seconds) {
+			if (use_timers[i].key.key_material) {
+				TEE_Free(use_timers[i].key.key_material);
+			}
 			use_timers[i].key.key_material = NULL;
 			use_timers[i].key.key_material_size = 0;
 			use_timers[i].min_sec = 0;
@@ -121,7 +145,9 @@ keymaster_error_t TA_trigger_timer(const keymaster_key_blob_t *key,
 		EMSG("Table of last access key time is full");
 		return KM_ERROR_TOO_MANY_OPERATIONS;
 	}
-	use_timers[free_n].key = *key;
+	if (!deep_key_copy(&use_timers[free_n].key, key)) {
+		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+	}
 	use_timers[free_n].last_access = cur_t;
 	use_timers[free_n].min_sec = min_sec;
 	return KM_ERROR_OK;

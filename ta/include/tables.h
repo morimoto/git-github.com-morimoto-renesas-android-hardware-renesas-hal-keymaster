@@ -39,7 +39,7 @@ typedef struct {
 	uint32_t min_sec;
 } keymaster_use_timer_t;
 
-keymaster_error_t TA_count_key_uses(const keymaster_key_blob_t key,
+keymaster_error_t TA_count_key_uses(const keymaster_key_blob_t *key,
 				const uint32_t max_uses);
 
 void TA_clean_timers(void);

@@ -16,7 +16,7 @@
 TA_OUT_INTERMEDIATES    := $(abspath $(PRODUCT_OUT)/obj/TA_OBJ)
 OPTEE_OUT               := $(abspath $(PRODUCT_OUT)/obj/OPTEE_OBJ)
 
-OPTEE_CROSS_COMPILE     := $(abspath ./prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-7.1.1/bin/aarch64-linux-gnu-)
+OPTEE_CROSS_COMPILE     := $(abspath ./prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu/bin/aarch64-linux-gnu-)
 
 ###########################################################
 ## Rules for building Trusted Application (TA)           ##

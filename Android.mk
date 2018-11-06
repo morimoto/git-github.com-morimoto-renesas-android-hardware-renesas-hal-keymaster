@@ -43,6 +43,7 @@ LOCAL_C_INCLUDES := \
 LOCAL_SHARED_LIBRARIES := \
 	libteec \
 	liblog \
+	libbase \
 	libhidlbase \
 	libhidltransport \
 	libhardware \

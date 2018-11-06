@@ -14,38 +14,34 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "android.hardware.keymaster@3.0-service.renesas"
+#define LOG_TAG "KeymasterHAL"
 
 #include <android/hardware/keymaster/3.0/IKeymasterDevice.h>
 
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/LegacySupport.h>
-#include <utils/Log.h>
+#include <android-base/logging.h>
 
 #include "optee_keymaster.h"
 
-using android::hardware::configureRpcThreadpool;
-using android::hardware::joinRpcThreadpool;
-using android::hardware::keymaster::V3_0::IKeymasterDevice;
-using android::hardware::keymaster::V3_0::renesas::OpteeKeymasterDevice;
+using ::android::hardware::configureRpcThreadpool;
+using ::android::hardware::joinRpcThreadpool;
+using ::android::hardware::keymaster::V3_0::IKeymasterDevice;
+using ::android::hardware::keymaster::V3_0::renesas::OpteeKeymasterDevice;
 using ::android::OK;
 using ::android::sp;
 
-const uint32_t max_threads = 1;
-
 int main() {
-    ALOGI("Loading...\n");
+    ALOGI("Loading...");
     sp<IKeymasterDevice> keymaster = new (std::nothrow) OpteeKeymasterDevice;
-    if (keymaster == nullptr) {
-        ALOGE("Could not create keymaster instance");
-        return 1;
-    }
-    configureRpcThreadpool(max_threads, true);
-    if (keymaster->registerAsService() != OK) {
-        ALOGE("Could not register service.");
-        return 1;
-    }
-    joinRpcThreadpool();
+    CHECK_EQ((keymaster != nullptr), true) <<
+        "Failed to allocate OpteeKeymasterDevice instance.";
 
-    return 0;
+    configureRpcThreadpool(1, true);
+
+    android::status_t status = keymaster->registerAsService();
+    CHECK_EQ(status, android::OK) <<
+        "Failed to register IKeymasterDevice interface.";
+
+    joinRpcThreadpool();
 }

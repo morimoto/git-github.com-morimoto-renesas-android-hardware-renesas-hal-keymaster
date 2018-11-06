@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <cutils/log.h>
+#include <log/log.h>
 #include <tee_client_api.h>
 #include <hardware/keymaster2.h>
 

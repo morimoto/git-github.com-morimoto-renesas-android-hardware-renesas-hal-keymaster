@@ -263,14 +263,11 @@ int OpteeKeymasterDevice::osVersion(uint32_t *in) {
     if ((str = std::strchr(str, '.')) != NULL) {
         *in += (uint32_t) std::atoi(str + 1) * 100;
     } else {
-        *in = 0xFFFFFFFF;
         goto exit;
     }
 
     if ((str = std::strchr(str + 1, '.')) != NULL) {
         *in += (uint32_t) std::atoi(str + 1);
-    } else {
-        *in = 0xFFFFFFFF;
     }
 
 exit:

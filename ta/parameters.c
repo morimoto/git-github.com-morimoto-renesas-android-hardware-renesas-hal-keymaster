@@ -1049,6 +1049,8 @@ keymaster_error_t TA_check_permission(const keymaster_key_param_set_t *params,
 		case KM_TAG_EXPORTABLE:
 			*exportable = params->params[i].key_param.boolean;
 			break;
+		case KM_TAG_INCLUDE_UNIQUE_ID:
+			return KM_ERROR_INVALID_KEY_BLOB;
 		default:
 			break;
 		}

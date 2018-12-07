@@ -685,6 +685,7 @@ TEE_Result TA_generate_UniqueID(uint64_t T, uint8_t *appID, uint32_t appIDlen,
 	}
 
 	res = TEE_SetOperationKey(op, key);
+	TEE_CloseObject(key);
 	if (res != TEE_SUCCESS) {
 		EMSG("Failed to set secret key, res=%x", res);
 		goto free_op;

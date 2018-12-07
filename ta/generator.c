@@ -533,6 +533,8 @@ keymaster_error_t TA_restore_key(uint8_t *key_material,
 					key_blob->key_material_size);
 	res = TA_decrypt(key_material, key_blob->key_material_size);
 	if (res != KM_ERROR_OK) {
+		if (((uint32_t)res) == TEE_ERROR_MAC_INVALID)
+			res = KM_ERROR_INVALID_KEY_BLOB;
 		EMSG("Failed to decript key blob");
 		goto out_rk;
 	}

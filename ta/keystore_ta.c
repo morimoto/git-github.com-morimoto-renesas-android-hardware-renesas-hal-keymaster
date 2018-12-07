@@ -73,7 +73,6 @@ exit:
 
 void TA_DestroyEntryPoint(void)
 {
-	TA_free_master_key();
 	TEE_CloseTASession(sessionSTA);
 	TEE_CloseTASession(session_rngSTA);
 	sessionSTA = TEE_HANDLE_NULL;
@@ -246,12 +245,8 @@ static keymaster_error_t TA_generateKey(TEE_Param params[TEE_NUM_PARAMS])
 
 	key_buffer_size = TA_get_key_size(key_algorithm);
 
-	key_blob.key_material_size = characts_size + key_buffer_size;
-	if (key_blob.key_material_size % BLOCK_SIZE != 0) {
-		/* do size alignment */
-		key_blob.key_material_size += BLOCK_SIZE -
-			(key_blob.key_material_size % BLOCK_SIZE);
-	}
+	key_blob.key_material_size = characts_size + key_buffer_size +
+		IV_LENGTH + TAG_LENGTH;
 
 	key_material = TEE_Malloc(key_blob.key_material_size,
 						TEE_MALLOC_FILL_ZERO);
@@ -266,7 +261,6 @@ static keymaster_error_t TA_generateKey(TEE_Param params[TEE_NUM_PARAMS])
 		EMSG("Failed to generate key, res=%x", res);
 		goto exit;
 	}
-	//TODO add bind keys to operating system and patch level version
 
 	TA_serialize_param_set(key_material + key_buffer_size, &params_t);
 
@@ -494,12 +488,8 @@ static keymaster_error_t TA_importKey(TEE_Param params[TEE_NUM_PARAMS])
 	if (res != KM_ERROR_OK)
 		goto out;
 	key_buffer_size = TA_get_key_size(key_algorithm);
-	key_blob.key_material_size = characts_size + key_buffer_size;
-	if (key_blob.key_material_size % BLOCK_SIZE != 0) {
-		/* size alignment */
-		key_blob.key_material_size += BLOCK_SIZE -
-			(key_blob.key_material_size % BLOCK_SIZE);
-	}
+	key_blob.key_material_size = characts_size + key_buffer_size +
+		IV_LENGTH + TAG_LENGTH;
 	key_material = TEE_Malloc(key_blob.key_material_size,
 						TEE_MALLOC_FILL_ZERO);
 	if (!key_material) {

@@ -18,8 +18,10 @@
 #ifndef ANDROID_OPTEE_MASTER_CRYPTO_H
 #define ANDROID_OPTEE_MASTER_CRYPTO_H
 
-#define KEY_SIZE 128U
-#define KEY_LENGTH 16
+#define KEY_SIZE 256U
+#define KEY_LENGTH (KEY_SIZE >> 3)
+#define IV_LENGTH 12
+#define TAG_LENGTH 16
 
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>
@@ -35,7 +37,5 @@ TEE_Result TA_create_secret_key(void);
 TEE_Result TA_execute(uint8_t *data, const size_t size, const uint32_t mode);
 TEE_Result TA_encrypt(uint8_t *data, const size_t size);
 TEE_Result TA_decrypt(uint8_t *data, const size_t size);
-
-void TA_free_master_key(void);
 
 #endif/* ANDROID_OPTEE_MASTER_CRYPTO_H */

@@ -27,14 +27,16 @@
 #include <utee_defines.h>
 
 #include "ta_ca_defs.h"
+#include "master_crypto.h"
 
+/* We save only key TAG to reduce the space */
 typedef struct {
-	keymaster_key_blob_t key;
+	uint8_t *key_tag;
 	uint32_t count;
 } keymaster_use_counter_t;
 
 typedef struct {
-	keymaster_key_blob_t key;
+	uint8_t *key_tag;
 	TEE_Time last_access;
 	uint32_t min_sec;
 } keymaster_use_timer_t;

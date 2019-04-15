@@ -216,6 +216,13 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 	output->data_length = *out_size;
 	if (res == KM_ERROR_OK && operation->padding == KM_PAD_PKCS7
 			&& operation->purpose == KM_PURPOSE_DECRYPT) {
+		if (operation->last_block.data) {
+			TEE_MemMove(output->data, operation->last_block.data, BLOCK_SIZE);
+			operation->last_block.data_length = 0;
+			TEE_Free(operation->last_block.data);
+			operation->last_block.data = NULL;
+			output->data_length += BLOCK_SIZE;
+		}
 		if (output->data_length > 0) {
 			res = TA_remove_pkcs7_pad(output, out_size);
 			if (res == KM_ERROR_OK)

@@ -1,4 +1,4 @@
-service hal_keymaster_renesas /vendor/bin/hw/android.hardware.keymaster@3.0-service.renesas
+service vendor.keymaster-hal-3-0 /vendor/bin/hw/android.hardware.keymaster@3.0-service.renesas
     class early_hal
     user system
     group system drmrpc

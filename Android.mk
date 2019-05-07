@@ -27,7 +27,7 @@ LOCAL_INIT_RC := android.hardware.keymaster@3.0-service.renesas.rc
 LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_PROPRIETARY_MODULE := true
-
+LOCAL_REQUIRED_MODULES := dba51a17-0563-11e7-93b16fa7b0071a51.ta
 LOCAL_CFLAGS = -Wall -Werror
 LOCAL_CFLAGS += -DANDROID_BUILD
 
@@ -37,7 +37,7 @@ LOCAL_SRC_FILES := \
 	optee_keymaster_ipc.c
 
 LOCAL_C_INCLUDES := \
-	hardware/renesas/optee-client/public \
+	vendor/renesas/utils/optee-client/public \
 	$(LOCAL_PATH)/ta/include
 
 LOCAL_SHARED_LIBRARIES := \
@@ -59,9 +59,9 @@ include $(BUILD_EXECUTABLE)
 
 # Please keep this variable consistent with TA_KEYMASTER_UUID define that
 # defined in ta/include/common.h file
-TA_UUID:=dba51a17-0563-11e7-93b16fa7b0071a51
-TA_SRC:=$(LOCAL_PATH)/ta
+TA_UUID    := dba51a17-0563-11e7-93b16fa7b0071a51
+TA_SRC     := $(LOCAL_PATH)/ta
 
-include device/renesas/common/build/build_executable.mk
+include device/renesas/common/build/build_tee_app.mk
 
 endif # Include only for Renesas ones.

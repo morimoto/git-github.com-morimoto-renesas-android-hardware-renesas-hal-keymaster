@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2017 GlobalLogic
+# Copyright (C) 2019 GlobalLogic
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,41 +15,43 @@
 
 # Include only for Renesas ones.
 ifneq (,$(filter $(TARGET_PRODUCT), salvator ulcb kingfisher))
-LOCAL_PATH:= $(call my-dir)
+
+LOCAL_PATH := $(call my-dir)
+TA_KEYMASTER_SRC     := $(LOCAL_PATH)/ta
+TA_KEYMASTER_UUID    := dba51a17-0563-11e7-93b16fa7b0071a51
 
 ################################################################################
 # Build keymaster HAL                                                          #
 ################################################################################
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := android.hardware.keymaster@3.0-service.renesas
-LOCAL_INIT_RC := android.hardware.keymaster@3.0-service.renesas.rc
-LOCAL_MODULE_RELATIVE_PATH := hw
-LOCAL_MODULE_TAGS := optional
-LOCAL_PROPRIETARY_MODULE := true
-LOCAL_REQUIRED_MODULES := dba51a17-0563-11e7-93b16fa7b0071a51.ta
-LOCAL_CFLAGS = -Wall -Werror
-LOCAL_CFLAGS += -DANDROID_BUILD
+LOCAL_MODULE                := android.hardware.keymaster@3.0-service.renesas
+LOCAL_INIT_RC               := android.hardware.keymaster@3.0-service.renesas.rc
+LOCAL_MODULE_RELATIVE_PATH  := hw
+LOCAL_MODULE_TAGS           := optional
+LOCAL_PROPRIETARY_MODULE    := true
+LOCAL_REQUIRED_MODULES      := $(TA_KEYMASTER_UUID)
+LOCAL_CFLAGS                += -DANDROID_BUILD
 
 LOCAL_SRC_FILES := \
-	service.cpp \
-	optee_keymaster.cpp \
-	optee_keymaster_ipc.c
+    service.cpp \
+    optee_keymaster.cpp \
+    optee_keymaster_ipc.c
 
 LOCAL_C_INCLUDES := \
-	vendor/renesas/utils/optee-client/public \
-	$(LOCAL_PATH)/ta/include
+    vendor/renesas/utils/optee-client/public \
+    $(TA_KEYMASTER_SRC)/include
 
 LOCAL_SHARED_LIBRARIES := \
-	libteec \
-	liblog \
-	libbase \
-	libhidlbase \
-	libhidltransport \
-	libhardware \
-	libutils \
-	libcutils \
-	android.hardware.keymaster@3.0
+    libteec \
+    liblog \
+    libbase \
+    libhidlbase \
+    libhidltransport \
+    libhardware \
+    libutils \
+    libcutils \
+    android.hardware.keymaster@3.0
 
 include $(BUILD_EXECUTABLE)
 
@@ -59,26 +61,26 @@ include $(BUILD_EXECUTABLE)
 
 # Please keep this variable consistent with TA_KEYMASTER_UUID define that
 # defined in ta/include/common.h file
-TA_KEYMASTER_UUID := dba51a17-0563-11e7-93b16fa7b0071a51
-TA_KEYMASTER_SRC := $(LOCAL_PATH)/ta
-
-TA_KEYMASTER_OUT := $(TA_OUT_INTERMEDIATES)/$(TA_KEYMASTER_UUID)_OBJ
-
-TA_KEYMASTER_TARGET := $(TA_KEYMASTER_UUID)_ta
-
+TA_KEYMASTER_OBJ            = $(PRODUCT_OUT)/obj/TA_OBJ/$(TA_KEYMASTER_UUID)
+TA_KEYMASTER_OUT            = $(abspath $(TA_KEYMASTER_OBJ))
+TA_KEYMASTER_BINARY         = $(TA_KEYMASTER_OBJ)/$(TA_KEYMASTER_UUID).ta
 # OP-TEE Trusted OS is dependency for TA
-.PHONY: TA_OUT_$(TA_KEYMASTER_UUID)
-TA_OUT_$(TA_KEYMASTER_UUID): tee.bin
+OPTEE_BINARY                = $(PRODUCT_OUT)/obj/OPTEE_OBJ/core/tee.bin
+OPTEE_TA_DEV_KIT_DIR        = $(abspath $(PRODUCT_OUT)/obj/OPTEE_OBJ/export-ta_arm64)
+
+$(TA_KEYMASTER_BINARY): $(OPTEE_BINARY)
 	mkdir -p $(TA_KEYMASTER_OUT)
-	mkdir -p $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/optee_armtz
+	CROSS_COMPILE=$(BSP_GCC_CROSS_COMPILE) BINARY=$(TA_KEYMASTER_UUID) TA_DEV_KIT_DIR=$(OPTEE_TA_DEV_KIT_DIR) $(ANDROID_MAKE) -C $(TA_KEYMASTER_SRC) O=$(TA_KEYMASTER_OUT) clean
+	CROSS_COMPILE=$(BSP_GCC_CROSS_COMPILE) BINARY=$(TA_KEYMASTER_UUID) TA_DEV_KIT_DIR=$(OPTEE_TA_DEV_KIT_DIR) $(ANDROID_MAKE) -C $(TA_KEYMASTER_SRC) O=$(TA_KEYMASTER_OUT) all
 
-.PHONY: $(TA_KEYMASTER_TARGET)
-$(TA_KEYMASTER_TARGET): TA_OUT_$(TA_KEYMASTER_UUID)
-	CROSS_COMPILE=$(OPTEE_CROSS_COMPILE) BINARY=$(TA_KEYMASTER_UUID) TA_DEV_KIT_DIR=$(TA_DEV_KIT_DIR) make -C $(TA_KEYMASTER_SRC) O=$(TA_KEYMASTER_OUT) clean
-	CROSS_COMPILE=$(OPTEE_CROSS_COMPILE) BINARY=$(TA_KEYMASTER_UUID) TA_DEV_KIT_DIR=$(TA_DEV_KIT_DIR) make -C $(TA_KEYMASTER_SRC) O=$(TA_KEYMASTER_OUT) all
+include $(CLEAR_VARS)
+LOCAL_MODULE                := $(TA_KEYMASTER_UUID)
+LOCAL_MODULE_STEM           := $(TA_KEYMASTER_UUID).ta
+LOCAL_PREBUILT_MODULE_FILE  := $(TA_KEYMASTER_BINARY)
+LOCAL_MODULE_PATH           := $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/optee_armtz/
+LOCAL_MODULE_CLASS          := EXECUTABLES
+include $(BUILD_PREBUILT)
 
-.PHONY: $(TA_KEYMASTER_UUID).ta
-$(TA_KEYMASTER_UUID).ta: $(TA_KEYMASTER_TARGET)
-	cp $(TA_KEYMASTER_OUT)/$@ $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/optee_armtz/$@
+$(LOCAL_BUILT_MODULE): $(TA_KEYMASTER_BINARY)
 
 endif # Include only for Renesas ones.

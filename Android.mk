@@ -27,6 +27,7 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE                := android.hardware.keymaster@3.0-service.renesas
 LOCAL_INIT_RC               := android.hardware.keymaster@3.0-service.renesas.rc
+LOCAL_VINTF_FRAGMENTS       := android.hardware.keymaster@3.0-service.renesas.xml
 LOCAL_MODULE_RELATIVE_PATH  := hw
 LOCAL_MODULE_TAGS           := optional
 LOCAL_PROPRIETARY_MODULE    := true

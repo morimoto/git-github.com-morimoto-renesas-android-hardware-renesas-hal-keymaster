@@ -225,7 +225,7 @@ Return<void>  OpteeKeymasterDevice::getHardwareFeatures(getHardwareFeatures_cb _
 Return<ErrorCode> OpteeKeymasterDevice::addRngEntropy(const hidl_vec<uint8_t> &data) {
     ErrorCode rc = ErrorCode::OK;
     int in_size = data.size() + sizeof(size_t);
-    uint8_t in[in_size];
+    std::unique_ptr<uint8_t[]> in(new uint8_t[in_size]);
     /*Restrictions for max input data length 2KB*/
     const uint32_t maxInputData = 1024 * 2;
     if (!checkConnection(rc))
@@ -236,11 +236,11 @@ Return<ErrorCode> OpteeKeymasterDevice::addRngEntropy(const hidl_vec<uint8_t> &d
         rc = ErrorCode::INVALID_INPUT_LENGTH;
         goto error;
     }
-    memset(in, 0, in_size);
-    serializeData(in, data.size(), &data[0], sizeof(uint8_t));
+    memset(in.get(), 0, in_size);
+    serializeData(in.get(), data.size(), &data[0], sizeof(uint8_t));
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_ADD_RNG_ENTROPY, in, in_size, nullptr, 0));
+        optee_keystore_call(KM_ADD_RNG_ENTROPY, in.get(), in_size, nullptr, 0));
 
     if (rc != ErrorCode::OK)
         ALOGE("Add RNG entropy failed with code %d [%x]", rc, rc);
@@ -306,29 +306,29 @@ Return<void> OpteeKeymasterDevice::generateKey(const hidl_vec<KeyParameter> &key
     keymaster_key_characteristics_t kmKeyCharacteristics{{nullptr, 0}, {nullptr, 0}};
     uint32_t outSize = recv_buf_size_;
     uint32_t inSize = getParamSetSize(kmParams) + 2 * sizeof(uint32_t); //+ os_version & patchlevel
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
-    memset(out, 0, outSize);
-    memset(in, 0, inSize);
+    memset(out.get(), 0, outSize);
+    memset(in.get(), 0, inSize);
 
-    ptr = in;
+    ptr = in.get();
     ptr += serializeParamSet(ptr, kmParams);
 
     ptr += osVersion((uint32_t *)ptr);
     ptr += osPatchlevel((uint32_t *)ptr);
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_GENERATE_KEY, in,
-            inSize, out, outSize));
+        optee_keystore_call(KM_GENERATE_KEY, in.get(),
+            inSize, out.get(), outSize));
     if (rc != ErrorCode::OK) {
         ALOGE("Generate key failed with error code %d [%x]", rc, rc);
         goto error;
     }
 
-    ptr = out;
+    ptr = out.get();
     ptr += deserializeKeyBlob(kmKeyBlob, ptr, rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed to deserialize key blob");
@@ -371,8 +371,8 @@ Return<void>  OpteeKeymasterDevice::getKeyCharacteristics(const hidl_vec<uint8_t
     inSize += sizeof(presence);
     if (appData.size())
         inSize += getBlobSize(kmAppData);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
@@ -380,24 +380,24 @@ Return<void>  OpteeKeymasterDevice::getKeyCharacteristics(const hidl_vec<uint8_t
         rc = ErrorCode::UNEXPECTED_NULL_POINTER;
         goto error;
     }
-    memset(out, 0, outSize);
-    memset(in, 0, inSize);
-    ptr = in;
+    memset(out.get(), 0, outSize);
+    memset(in.get(), 0, inSize);
+    ptr = in.get();
     ptr += serializeData(ptr, kmKeyBlob.key_material_size, kmKeyBlob.key_material,
                      SIZE_OF_ITEM(kmKeyBlob.key_material));
     ptr += serializeBlobWithPresenceInfo(ptr, kmClientId, clientId.size());
     ptr += serializeBlobWithPresenceInfo(ptr, kmAppData, appData.size());
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_GET_KEY_CHARACTERISTICS, in,
-            inSize, out, outSize));
+        optee_keystore_call(KM_GET_KEY_CHARACTERISTICS, in.get(),
+            inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Get key characteristics failed with code %d, [%x]", rc, rc);
         goto error;
     }
 
-    deserializeKeyCharacteristics(kmKeyCharacteristics, out, rc);
+    deserializeKeyCharacteristics(kmKeyCharacteristics, out.get(), rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed to deserialize key characteristics");
         goto error;
@@ -426,28 +426,28 @@ Return<void>  OpteeKeymasterDevice::importKey(const hidl_vec<KeyParameter> &para
     int outSize = recv_buf_size_;
     int inSize = getParamSetSize(kmParams) + SIZE_OF_ITEM(kmParams.params) +
                     getBlobSize(kmKeyData);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
-    memset(in, 0, inSize);
-    memset(out, 0, outSize);
-    ptr = in;
+    memset(in.get(), 0, inSize);
+    memset(out.get(), 0, outSize);
+    ptr = in.get();
     ptr += serializeParamSet(ptr, kmParams);
     ptr += serializeKeyFormat(ptr, kmKeyFormat);
     ptr += serializeData(ptr, kmKeyData.data_length, kmKeyData.data,
                                                SIZE_OF_ITEM(kmKeyData.data));
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_IMPORT_KEY, in, inSize, out, outSize));
+        optee_keystore_call(KM_IMPORT_KEY, in.get(), inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Import key failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    ptr = out;
+    ptr = out.get();
     ptr += deserializeKeyBlob(kmKeyBlob, ptr, rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed to allocate memory for blob deserialization");
@@ -491,17 +491,17 @@ Return<void>  OpteeKeymasterDevice::exportKey(KeyFormat exportFormat, const hidl
     inSize += sizeof(presence);
     if (!appData.size())
         inSize += getBlobSize(kmAppData);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
     if (!keyBlob.size() || kmKeyBlob.key_material == nullptr) {
         rc = ErrorCode::UNEXPECTED_NULL_POINTER;
     }
-    memset(out, 0, outSize);
-    memset(in, 0, inSize);
-    ptr = in;
+    memset(out.get(), 0, outSize);
+    memset(in.get(), 0, inSize);
+    ptr = in.get();
     ptr += serializeKeyFormat(ptr, kmKeyFormat);
     ptr += serializeData(ptr, kmKeyBlob.key_material_size,
                      kmKeyBlob.key_material,
@@ -510,14 +510,14 @@ Return<void>  OpteeKeymasterDevice::exportKey(KeyFormat exportFormat, const hidl
     ptr += serializeBlobWithPresenceInfo(ptr, kmAppData, appData.size());
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_EXPORT_KEY, in, inSize, out, outSize));
+        optee_keystore_call(KM_EXPORT_KEY, in.get(), inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Export key failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    deserializeBlob(kmBlob, out, rc);
+    deserializeBlob(kmBlob, out.get(), rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed to deserialize blob from TA");
         goto error;
@@ -568,14 +568,14 @@ Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAtte
     int outSize = recv_buf_size_;
     int inSize = getParamSetSize(kmAttestParams) + getKeyBlobSize(kmKeyToAttest)
                + sizeof(uint8_t);  // verifiedbootstate
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *perm = nullptr;
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
-    memset(in, 0, inSize);
-    memset(out, 0, outSize);
+    memset(in.get(), 0, inSize);
+    memset(out.get(), 0, outSize);
     for (size_t i = 0; i < attestParams.size(); ++i) {
         switch (attestParams[i].tag) {
         case Tag::ATTESTATION_ID_BRAND:
@@ -598,7 +598,7 @@ Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAtte
         }
     }
 
-    ptr = in;
+    ptr = in.get();
     ptr += serializeData(ptr, kmKeyToAttest.key_material_size,
                     kmKeyToAttest.key_material,
                     SIZE_OF_ITEM(kmKeyToAttest.key_material));
@@ -607,14 +607,14 @@ Return<void>  OpteeKeymasterDevice::attestKey(const hidl_vec<uint8_t> &keyToAtte
     ptr += verifiedBootState(ptr);
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_ATTEST_KEY, in, inSize, out, outSize));
+        optee_keystore_call(KM_ATTEST_KEY, in.get(), inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Attest key failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    ptr = out;
+    ptr = out.get();
     ptr += deserializeSize(kmCertChain.entry_count, ptr);
     kmCertChain.entries = new (std::nothrow) keymaster_blob_t[kmCertChain.entry_count];
     if (!kmCertChain.entries) {
@@ -658,27 +658,27 @@ Return<void>  OpteeKeymasterDevice::upgradeKey(const hidl_vec<uint8_t> &keyBlobT
     int outSize = recv_buf_size_;
     int inSize = getKeyBlobSize(kmKeyBlobToUpgrade) +
                 getParamSetSize(kmUpgradeParams);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
-    memset(out, 0, outSize);
-    memset(in, 0, inSize);
-    ptr = in;
+    memset(out.get(), 0, outSize);
+    memset(in.get(), 0, inSize);
+    ptr = in.get();
     ptr += serializeData(ptr, kmKeyBlobToUpgrade.key_material_size,
                    kmKeyBlobToUpgrade.key_material,
                    SIZE_OF_ITEM(kmKeyBlobToUpgrade.key_material));
     ptr += serializeParamSet(ptr, kmUpgradeParams);
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_UPGRADE_KEY, in, inSize, out, outSize));
+        optee_keystore_call(KM_UPGRADE_KEY, in.get(), inSize, out.get(), outSize));
     if (rc != ErrorCode::OK) {
         ALOGE("Upgrade key failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    deserializeKeyBlob(kmKeyBlob, out, rc);
+    deserializeKeyBlob(kmKeyBlob, out.get(), rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed to deserialize key blob");
         goto error;
@@ -700,15 +700,15 @@ Return<ErrorCode>  OpteeKeymasterDevice::deleteKey(const hidl_vec<uint8_t> &keyB
     ErrorCode rc = ErrorCode::OK;
     keymaster_key_blob_t kmKeyBlob = hidlVec2KmKeyBlob(keyBlob);
     int inSize = getKeyBlobSize(kmKeyBlob);
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     if (!checkConnection(rc))
         goto error;
-    memset(in, 0, inSize);
-    serializeData(in, kmKeyBlob.key_material_size, kmKeyBlob.key_material,
+    memset(in.get(), 0, inSize);
+    serializeData(in.get(), kmKeyBlob.key_material_size, kmKeyBlob.key_material,
                         SIZE_OF_ITEM(kmKeyBlob.key_material));
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_DELETE_KEY, in, inSize, nullptr, 0));
+        optee_keystore_call(KM_DELETE_KEY, in.get(), inSize, nullptr, 0));
 
     /*
      * Keymaster 3.0 requires deleteKey to return ErrorCode::OK if the key
@@ -755,8 +755,8 @@ Return<void> OpteeKeymasterDevice::begin(KeyPurpose purpose, const hidl_vec<uint
     int outSize = recv_buf_size_;
     int inSize = sizeof(purpose) + getKeyBlobSize(kmKey) +
         sizeof(presence) + getParamSetSize(kmInParams);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
@@ -764,9 +764,9 @@ Return<void> OpteeKeymasterDevice::begin(KeyPurpose purpose, const hidl_vec<uint
         rc = ErrorCode::UNEXPECTED_NULL_POINTER;
         goto error;
     }
-    memset(out, 0, outSize);
-    memset(in, 0, inSize);
-    ptr = in;
+    memset(out.get(), 0, outSize);
+    memset(in.get(), 0, inSize);
+    ptr = in.get();
     memcpy(ptr, &kmPurpose, sizeof(kmPurpose));
     ptr += sizeof(kmPurpose);
     ptr += serializeData(ptr, kmKey.key_material_size, kmKey.key_material,
@@ -774,14 +774,14 @@ Return<void> OpteeKeymasterDevice::begin(KeyPurpose purpose, const hidl_vec<uint
     ptr += serializeParamSetWithPresence(ptr, kmInParams);
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_BEGIN, in, inSize, out, outSize));
+        optee_keystore_call(KM_BEGIN, in.get(), inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Begin failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    ptr = out;
+    ptr = out.get();
     ptr += deserializeParamSet(kmOutParams, ptr, rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed to deserialize param set from TA");
@@ -814,27 +814,27 @@ Return<void> OpteeKeymasterDevice::update(uint64_t operationHandle, const hidl_v
     int outSize = recv_buf_size_;
     int inSize = sizeof(operationHandle) + getBlobSize(kmInputBlob) +
             sizeof(presence) + getParamSetSize(kmInParams);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
-    memset(out, 0, outSize);
-    memset(in, 0, inSize);
-    ptr = in;
+    memset(out.get(), 0, outSize);
+    memset(in.get(), 0, inSize);
+    ptr = in.get();
     ptr += serializeSize(ptr, operationHandle);
     ptr += serializeParamSetWithPresence(ptr, kmInParams);
     ptr += serializeData(ptr, kmInputBlob.data_length, kmInputBlob.data,
                         SIZE_OF_ITEM(kmInputBlob.data));
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_UPDATE, in, inSize, out, outSize));
+        optee_keystore_call(KM_UPDATE, in.get(), inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Update failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    ptr = out;
+    ptr = out.get();
     memcpy(&consumed, ptr, sizeof(consumed));
     ptr += sizeof(consumed);
     ptr += deserializeBlob(kmOutBlob, ptr, rc);
@@ -879,12 +879,12 @@ Return<void>  OpteeKeymasterDevice::finish(uint64_t operationHandle, const hidl_
             sizeof(presence) + getBlobSize(kmSignature) +
             sizeof(presence) + getBlobSize(kmInput) +
             sizeof(presence) + getParamSetSize(kmInParams);
-    uint8_t out[outSize];
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> out(new uint8_t[outSize]);
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     uint8_t *ptr = nullptr;
     if (!checkConnection(rc))
         goto error;
-    ptr = in;
+    ptr = in.get();
     memcpy(ptr, &operationHandle, sizeof(operationHandle));
     ptr += sizeof(operationHandle);
     ptr += serializeParamSetWithPresence(ptr, kmInParams);
@@ -892,14 +892,14 @@ Return<void>  OpteeKeymasterDevice::finish(uint64_t operationHandle, const hidl_
     ptr += serializeBlobWithPresenceInfo(ptr, kmSignature, true);
 
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_FINISH, in, inSize, out, outSize));
+        optee_keystore_call(KM_FINISH, in.get(), inSize, out.get(), outSize));
 
     if (rc != ErrorCode::OK) {
         ALOGE("Finish failed with code %d [%x]", rc, rc);
         goto error;
     }
 
-    ptr = out;
+    ptr = out.get();
     ptr += deserializeParamSet(kmOutParams, ptr, rc);
     if (rc != ErrorCode::OK) {
         ALOGE("Failed deserialize param set from TA");
@@ -928,13 +928,13 @@ error:
 Return<ErrorCode>  OpteeKeymasterDevice::abort(uint64_t operationHandle) {
     ErrorCode rc = ErrorCode::OK;
     int inSize = sizeof(operationHandle);
-    uint8_t in[inSize];
+    std::unique_ptr<uint8_t[]> in(new uint8_t[inSize]);
     if (!checkConnection(rc))
         goto error;
-    memset(in, 0, inSize);
-    memcpy(in, &operationHandle, sizeof(operationHandle));
+    memset(in.get(), 0, inSize);
+    memcpy(in.get(), &operationHandle, sizeof(operationHandle));
     rc = legacy_enum_conversion(
-        optee_keystore_call(KM_ABORT, in, inSize, nullptr, 0));
+        optee_keystore_call(KM_ABORT, in.get(), inSize, nullptr, 0));
 
     if (rc != ErrorCode::OK)
         ALOGE("Abort failed with code %d [%x]", rc, rc);

@@ -127,7 +127,11 @@ private:
 			const uint8_t *source, ErrorCode &rc);
 
     bool is_connected_;
-    const uint32_t recv_buf_size_ = 8 * 1024;
+    /* This constant is used for precomuted outbuf size for keymaster functions.
+     * There are no any strict rules for out memory size and we can't predict it
+     * easily, but we suppose, that 100 kB will be suitable for keymaster needs.
+     */
+    const uint32_t recv_buf_size_ = 100 * 1024;
 
     const bool supports_symmetric_cryptography_ = true;
     const bool supports_attestation_ = true;

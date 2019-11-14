@@ -1073,6 +1073,11 @@ static keymaster_error_t TA_update(TEE_Param params[TEE_NUM_PARAMS])
 	res = TA_get_operation(operation_handle, &operation);
 	if (res != KM_ERROR_OK)
 		goto out;
+	if (operation.purpose == KM_PURPOSE_SIGN && input_provided == 0) {
+		res = KM_ERROR_INVALID_INPUT_LENGTH;
+		goto out;
+	}
+
 	key_material = TEE_Malloc(operation.key->key_material_size,
 						TEE_MALLOC_FILL_ZERO);
 	res = TA_restore_key(key_material, operation.key, &key_size,

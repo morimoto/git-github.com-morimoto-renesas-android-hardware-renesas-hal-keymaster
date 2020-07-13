@@ -66,7 +66,7 @@ TA_KEYMASTER_OBJ            = $(PRODUCT_OUT)/obj/TA_OBJ/$(TA_KEYMASTER_UUID)
 TA_KEYMASTER_OUT            = $(abspath $(TA_KEYMASTER_OBJ))
 TA_KEYMASTER_BINARY         = $(TA_KEYMASTER_OBJ)/$(TA_KEYMASTER_UUID).ta
 # OP-TEE Trusted OS is dependency for TA
-OPTEE_BINARY                = $(PRODUCT_OUT)/obj/OPTEE_OBJ/core/tee.bin
+OPTEE_BINARY                = $(PRODUCT_OUT)/obj/OPTEE_OBJ/core/tee-raw.bin
 OPTEE_TA_DEV_KIT_DIR        = $(abspath $(PRODUCT_OUT)/obj/OPTEE_OBJ/export-ta_arm64)
 
 $(TA_KEYMASTER_BINARY): $(OPTEE_BINARY) $(wildcard $(TA_KEYMASTER_SRC)/*)

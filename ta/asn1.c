@@ -89,18 +89,21 @@ keymaster_error_t TA_decode_pkcs8(const TEE_TASessionHandle sessionSTA,
 		}
 		tag = attrs_list[*attrs_count];
 		TEE_MemMove(&attr_size, output + padding, sizeof(attr_size));
-		padding += sizeof(attr_size);
-		buf = TEE_Malloc(attr_size, TEE_MALLOC_FILL_ZERO);
-		if (!buf) {
-			EMSG("Failed to allocate memory for imported attribute buffer");
-			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-			goto out;
+		buf = NULL;
+		if (attr_size > 0) {
+			padding += sizeof(attr_size);
+			buf = TEE_Malloc(attr_size, TEE_MALLOC_FILL_ZERO);
+			if (!buf) {
+				EMSG("Failed to allocate memory for imported attribute buffer");
+				res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+				goto out;
+			}
+			TEE_MemMove(buf, output + padding, attr_size);
+			padding += attr_size;
+			if (algorithm == KM_ALGORITHM_RSA && *attrs_count == 1 &&
+						*rsa_public_exponent == UNDEFINED)
+				TEE_MemMove(rsa_public_exponent, buf, attr_size);
 		}
-		TEE_MemMove(buf, output + padding, attr_size);
-		padding += attr_size;
-		if (algorithm == KM_ALGORITHM_RSA && *attrs_count == 1 &&
-					*rsa_public_exponent == UNDEFINED)
-			TEE_MemMove(rsa_public_exponent, buf, attr_size);
 		TEE_InitRefAttribute(*attrs + *attrs_count,
 				tag, buf, attr_size);
 		(*attrs_count)++;

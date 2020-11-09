@@ -889,7 +889,7 @@ Return<void>  OpteeKeymasterDevice::finish(uint64_t operationHandle, const hidl_
     ptr += sizeof(operationHandle);
     ptr += serializeParamSetWithPresence(ptr, kmInParams);
     ptr += serializeBlobWithPresenceInfo(ptr, kmInput, true);
-    ptr += serializeBlobWithPresenceInfo(ptr, kmSignature, true);
+    serializeBlobWithPresenceInfo(ptr, kmSignature, signature.size());
 
     rc = legacy_enum_conversion(
         optee_keystore_call(KM_FINISH, in.get(), inSize, out.get(), outSize));

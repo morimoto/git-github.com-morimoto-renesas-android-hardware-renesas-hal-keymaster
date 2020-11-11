@@ -193,15 +193,19 @@ keymaster_error_t TA_try_start_operation(
 			operations[i].padding = padding;
 			operations[i].mode = mode;
 			operations[i].digestLength = get_digest_size(&digest) / 8; /*in bytes*/
-			operations[i].nonce.data = TEE_Malloc(
-						nonce.data_length,
-						TEE_MALLOC_FILL_ZERO);
-			if (!operations[i].nonce.data) {
-				EMSG("Failed to allocate memory for nonce");
-				return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+			if (nonce.data_length) {
+				operations[i].nonce.data = TEE_Malloc(
+							nonce.data_length,
+							TEE_MALLOC_FILL_ZERO);
+				if (!operations[i].nonce.data) {
+					EMSG("Failed to allocate memory for nonce");
+					return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+				}
+				TEE_MemMove(operations[i].nonce.data,
+						nonce.data, nonce.data_length);
+			} else {
+				operations[i].nonce.data = NULL;
 			}
-			TEE_MemMove(operations[i].nonce.data,
-					nonce.data, nonce.data_length);
 			operations[i].nonce.data_length = nonce.data_length;
 			return KM_ERROR_OK;
 		}

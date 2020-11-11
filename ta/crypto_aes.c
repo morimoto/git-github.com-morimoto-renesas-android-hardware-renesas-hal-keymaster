@@ -321,7 +321,7 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 	}
 
 	/* only KM_MODE_CBC and KM_MODE_ECB */
-	if (operation->padding == KM_PAD_PKCS7 && !operation->buffering &&
+	if (operation->padding == KM_PAD_PKCS7 &&
 			operation->purpose == KM_PURPOSE_ENCRYPT) {
 		DMSG("Adding padding before encryption");
 		res = TA_add_pkcs7_pad(input, !operation->padded, output,

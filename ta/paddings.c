@@ -74,12 +74,6 @@ keymaster_error_t TA_add_pkcs7_pad(keymaster_blob_t *input,
 		return KM_ERROR_OK;
 	pad = BLOCK_SIZE - (input->data_length % BLOCK_SIZE);
 	DMSG("PKCS7 ADD pad = %x", pad);
-	/* if input data size is a multiple of block size add
-	 * one extra block as padding
-	 */
-	if (pad == 0)
-		pad = BLOCK_SIZE;
-	/* Freed before input blob is destroyed by caller */
 	data = TEE_Malloc(pad + input->data_length, TEE_MALLOC_FILL_ZERO);
 	if (!data) {
 		EMSG("Failed to allocate memory for buffer on padding adding");

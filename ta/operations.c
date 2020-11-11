@@ -244,36 +244,18 @@ keymaster_error_t TA_start_operation(
 	return res;
 }
 
-keymaster_error_t TA_get_operation(const keymaster_operation_handle_t op_handle,
-					keymaster_operation_t *operation)
+keymaster_operation_t *TA_get_operation(const keymaster_operation_handle_t op_handle)
 {
-	keymaster_error_t res = KM_ERROR_INVALID_OPERATION_HANDLE;
 	TEE_Time cur_t;
 
 	for (uint32_t i = 0; i < KM_MAX_OPERATION; i++) {
 		if (op_handle == operations[i].op_handle) {
 			TEE_GetSystemTime(&cur_t);
 			operations[i].last_access = &cur_t;
-			res = KM_ERROR_OK;
-			*operation = operations[i];
-			break;
+			return &operations[i];
 		}
 	}
-	return res;
-}
-
-keymaster_error_t TA_update_operation(keymaster_operation_handle_t op_handle,
-					keymaster_operation_t *operation)
-{
-	keymaster_error_t res = KM_ERROR_INVALID_OPERATION_HANDLE;
-
-	for (uint32_t i = 0; i < KM_MAX_OPERATION; i++) {
-		if (op_handle == operations[i].op_handle) {
-			operations[i] = *operation;
-			break;
-		}
-	}
-	return res;
+	return NULL;
 }
 
 keymaster_error_t TA_store_sf_data(const keymaster_blob_t *input,

@@ -129,8 +129,6 @@ static keymaster_error_t TA_destroyAttestationIds(TEE_Param params[TEE_NUM_PARAM
 
 static keymaster_error_t TA_begin(TEE_Param params[TEE_NUM_PARAMS]);
 
-static keymaster_error_t TA_update(TEE_Param params[TEE_NUM_PARAMS]);
-
 static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS]);
 
 static keymaster_error_t TA_abort(TEE_Param params[TEE_NUM_PARAMS]);

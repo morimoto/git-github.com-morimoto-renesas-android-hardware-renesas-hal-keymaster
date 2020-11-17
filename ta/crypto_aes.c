@@ -312,24 +312,7 @@ keymaster_error_t TA_aes_update(keymaster_operation_t *operation,
 				DMSG("Buffering ON");
 				operation->buffering = true;
 			}
-			if (operation->prev_in_size == UNDEFINED
-					&& input->data_length == BLOCK_SIZE) {
-				operation->prev_in_size = input->data_length;
-				goto out;
-			}
 			operation->prev_in_size = input->data_length;
-			if (operation->buffering && ((input->data_length <=
-					BLOCK_SIZE && operation->purpose ==
-					KM_PURPOSE_DECRYPT) ||
-					(input->data_length < BLOCK_SIZE &&
-					operation->purpose ==
-					KM_PURPOSE_ENCRYPT))) {
-				DMSG("Input data is too small. Buffering");
-				/* Buffering if data
-				 * transferred by chunks
-				 */
-				goto out;
-			}
 			DMSG("Some blocks can be processed");
 		} else {/* KM_PAD_NONE */
 			if (input->data_length < BLOCK_SIZE)

@@ -27,8 +27,6 @@
 
 #define CMD_ASN1_DECODE 0
 #define CMD_ASN1_ENCODE_PUBKEY 1
-#define CMD_EC_SIGN_ENCODE 2
-#define CMD_EC_SIGN_DECODE 3
 #define CMD_ASN1_GEN_ROOT_RSA_CERT 4
 #define CMD_ASN1_GEN_ROOT_EC_CERT 5
 #define CMD_ASN1_GEN_ATT_RSA_CERT 6
@@ -41,13 +39,6 @@ keymaster_error_t TA_decode_pkcs8(const TEE_TASessionHandle sessionSTA,
 				const keymaster_algorithm_t algorithm,
 				uint32_t *key_size,
 				uint64_t *rsa_public_exponent);
-
-keymaster_error_t TA_encode_ec_sign(const TEE_TASessionHandle sessionSTA,
-				uint8_t *out, uint32_t *out_l);
-
-keymaster_error_t TA_decode_ec_sign(const TEE_TASessionHandle sessionSTA,
-				keymaster_blob_t *signature,
-				uint32_t key_size);
 
 keymaster_error_t TA_encode_key(const TEE_TASessionHandle sessionSTA,
 				keymaster_blob_t *export_data,

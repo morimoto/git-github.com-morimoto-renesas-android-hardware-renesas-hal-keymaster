@@ -94,7 +94,6 @@ keymaster_error_t TA_ec_finish(const keymaster_operation_t *operation,
 				keymaster_blob_t *signature,
 				uint32_t *out_size,
 				const uint32_t key_size,
-				TEE_TASessionHandle *sessionSTA,
 				bool *is_input_ext)
 {
 	keymaster_error_t res = KM_ERROR_OK;
@@ -142,21 +141,10 @@ keymaster_error_t TA_ec_finish(const keymaster_operation_t *operation,
 							in_buf_l, output->data,
 							out_size);
 			if (res == TEE_SUCCESS && *out_size > 0) {
-				res = TA_encode_ec_sign(*sessionSTA,
-						output->data, out_size);
-				if (res != KM_ERROR_OK) {
-					EMSG("Failed to encode EC sign, res=%x", res);
-					break;
-				}
+				EMSG("Failed to sign data, res=0x%x", res);
 			}
 		} else {
 			*out_size = 0;
-			res = TA_decode_ec_sign(*sessionSTA, signature,
-								key_size);
-			if (res != KM_ERROR_OK) {
-				EMSG("Failed to decode EC sign, res=%x", res);
-				break;
-			}
 			res = TEE_AsymmetricVerifyDigest(*operation->operation,
 							NULL, 0, in_buf,
 							in_buf_l,

@@ -1286,7 +1286,7 @@ static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS])
 	case TEE_TYPE_ECDSA_KEYPAIR:
 		res = TA_ec_finish(operation, &input, &output, &signature,
 					&out_size, key_size,
-					&sessionSTA, &is_input_ext);
+					&is_input_ext);
 		break;
 	default: /* HMAC */
 		if (operation->purpose == KM_PURPOSE_SIGN) {

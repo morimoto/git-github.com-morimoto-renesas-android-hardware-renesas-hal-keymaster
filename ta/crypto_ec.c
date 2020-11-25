@@ -17,47 +17,6 @@
 
 #include "crypto_ec.h"
 
-static keymaster_error_t TA_check_ec_data_size(uint8_t **data, uint32_t *data_l,
-				const uint32_t key_size, bool *clear_in_buf)
-{
-	keymaster_error_t res = KM_ERROR_OK;
-	uint32_t key_size_bytes = (key_size + 7) / 8;
-	uint8_t *ptr = NULL;
-
-	/*
-	 * If the data provided for signing
-	 * or verification is too long, truncate it
-	 */
-	if (*data_l >= key_size_bytes) {
-		/* assemed that data represented as big endian,
-		 * so first zero can be ignored
-		 */
-		while (*data_l > key_size_bytes && (*data)[0] == 0) {
-			(*data_l)--;
-			(*data)++;
-		}
-		*data_l = key_size_bytes;
-		if (key_size < *data_l * 8) {
-			TA_short_be_rshift(*data, *data_l,
-				8 - (key_size & 0x7));
-		}
-	} else {
-		ptr = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
-		if (!ptr) {
-			EMSG("Failed to allocate memory for extended data");
-			res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
-			goto out;
-		}
-		TEE_MemMove(ptr + (key_size_bytes - *data_l), *data, *data_l);
-		*data_l = key_size_bytes;
-		if (*clear_in_buf)
-			TEE_Free(*data);
-		*data = ptr;
-		*clear_in_buf = true;
-	}
-out:
-	return res;
-}
 
 keymaster_error_t TA_ec_update(keymaster_operation_t *operation,
 				const keymaster_blob_t *input,
@@ -128,13 +87,6 @@ keymaster_error_t TA_ec_finish(const keymaster_operation_t *operation,
 			in_buf = input->data;
 			in_buf_l = input->data_length;
 		}
-		/* If the data provided for unpadded signing or
-		 * verification is too long, truncate it.
-		 */
-		res = TA_check_ec_data_size(&in_buf, &in_buf_l, key_size,
-						&clear_in_buf);
-		if (res != KM_ERROR_OK)
-			break;
 		if (operation->purpose == KM_PURPOSE_SIGN) {
 			res = TEE_AsymmetricSignDigest(*operation->operation,
 							NULL, 0, in_buf,

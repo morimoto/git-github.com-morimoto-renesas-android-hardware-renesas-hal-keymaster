@@ -22,7 +22,6 @@
 #include <tee_internal_api_extensions.h>
 #include <utee_defines.h>
 
-#include "shift.h"
 #include "ta_ca_defs.h"
 #include "operations.h"
 #include "crypto_rsa.h"

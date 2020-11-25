@@ -173,9 +173,14 @@ keymaster_error_t TA_try_start_operation(
 			operations[i].key->key_material_size =
 							key.key_material_size;
 			/* freed when operation aborted (TA_abort_operation) */
-			operations[i].key->key_material = TEE_Malloc(
-						key.key_material_size,
-						TEE_MALLOC_FILL_ZERO);
+			if (key.key_material_size) {
+				operations[i].key->key_material = TEE_Malloc(
+							key.key_material_size,
+							TEE_MALLOC_FILL_ZERO);
+			} else {
+				operations[i].key->key_material == NULL;
+				EMSG("key_material_size is 0!");
+			}
 			if (!operations[i].key->key_material) {
 				EMSG("Failed to allocate memory for operation key data");
 				return KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -273,8 +278,13 @@ keymaster_error_t TA_store_sf_data(const keymaster_blob_t *input,
 	new->next = NULL;
 	new->data.data_length = input->data_length;
 	/* freed when operation is aborted (TA_abort_operation) */
-	new->data.data = TEE_Malloc(new->data.data_length,
-						TEE_MALLOC_FILL_ZERO);
+	if (new->data.data_length) {
+		new->data.data = TEE_Malloc(new->data.data_length,
+							TEE_MALLOC_FILL_ZERO);
+	} else {
+		new->data.data = NULL;
+		EMSG("data_length is 0!");
+	}
 	if (!new->data.data) {
 		EMSG("Failed to allocate memory for buffered sign/veify data");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -309,7 +319,13 @@ keymaster_error_t TA_append_sf_data(keymaster_blob_t *input,
 			 * In this case input is stack variable and we need to
 			 * allocate memory for next operations.
 			 */
-			ptr = TEE_Malloc(input->data_length, TEE_MALLOC_FILL_ZERO);
+			if (input->data_length) {
+				ptr = TEE_Malloc(input->data_length, TEE_MALLOC_FILL_ZERO);
+			} else {
+				EMSG("data_length is 0!");
+				ptr =NULL;
+			}
+			
 			if (!ptr) {
 				EMSG("Failed to allocate memory for input data buffer");
 				return KM_ERROR_MEMORY_ALLOCATION_FAILED;

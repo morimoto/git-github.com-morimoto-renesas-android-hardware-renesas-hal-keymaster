@@ -98,7 +98,13 @@ TEE_Result TA_execute(uint8_t *data, const size_t size, const uint32_t mode)
 		return res;
 	}
 
-	outbuf = TEE_Malloc(size, TEE_MALLOC_FILL_ZERO);
+	if (size) {
+		outbuf = TEE_Malloc(size, TEE_MALLOC_FILL_ZERO);
+	} else {
+		outbuf = NULL;
+		EMSG("Output size is zero!");
+	}
+
 	outptr = outbuf;
 	if (!outbuf) {
 		EMSG("failed to allocate memory for out buffer");

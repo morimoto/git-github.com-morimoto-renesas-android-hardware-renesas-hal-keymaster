@@ -45,8 +45,13 @@ static keymaster_error_t TA_append_input(keymaster_blob_t *input,
 	uint32_t push_to_input = operation->a_data_length
 					+ to_copy - tag_length;
 
-	data = TEE_Malloc(input->data_length + push_to_input,
-						TEE_MALLOC_FILL_ZERO);
+	if (input->data_length + push_to_input) {
+		data = TEE_Malloc(input->data_length + push_to_input,
+							TEE_MALLOC_FILL_ZERO);
+	} else {
+		data = NULL;
+		EMSG("Requested allocation size is 0!");
+	}
 	if (!data) {
 		EMSG("Failed to allocate memory for input appended by TAG");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -173,7 +178,13 @@ keymaster_error_t TA_aes_finish(keymaster_operation_t *operation,
 			goto out;
 		if (operation->purpose == KM_PURPOSE_ENCRYPT) {
 			/* During encryption */
-			tag = TEE_Malloc(tag_len, TEE_MALLOC_FILL_ZERO);
+			if (tag_len) {
+				tag = TEE_Malloc(tag_len, TEE_MALLOC_FILL_ZERO);
+			} else {
+				tag = NULL;
+				EMSG("Requested tag len is 0!");
+			}
+
 			if (!tag) {
 				EMSG("Failed to allocate memory for GCM tag");
 				res = KM_ERROR_MEMORY_ALLOCATION_FAILED;

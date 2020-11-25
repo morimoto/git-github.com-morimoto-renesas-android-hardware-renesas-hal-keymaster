@@ -582,7 +582,13 @@ keymaster_error_t TA_restore_key(uint8_t *key_material,
 							sizeof(attr_size));
 			padding += sizeof(attr_size);
 			/* will be freed when parameters array is destroyed */
-			buf = TEE_Malloc(attr_size, TEE_MALLOC_FILL_ZERO);
+
+			if (attr_size) {
+				buf = TEE_Malloc(attr_size, TEE_MALLOC_FILL_ZERO);
+			} else {
+				buf = NULL;
+				EMSG("Requested attr_size is 0!");
+			}
 			if (!buf) {
 				res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
 				EMSG("Failed to allocate memory for attribute");

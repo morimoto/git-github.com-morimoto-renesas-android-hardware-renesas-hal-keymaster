@@ -154,7 +154,12 @@ static keymaster_error_t TA_addRngEntropy(TEE_Param params[TEE_NUM_PARAMS])
 		EMSG("Out of input array bounds on deserialization");
 		return KM_ERROR_INSUFFICIENT_BUFFER_SPACE;
 	}
-	data = TEE_Malloc(data_length, TEE_MALLOC_FILL_ZERO);
+	if (data_length) {
+		data = TEE_Malloc(data_length, TEE_MALLOC_FILL_ZERO);
+	} else {
+		data = NULL;
+		EMSG("Requested data_length is 0!");
+	}
 	if (!data) {
 		EMSG("Failed to allocate memory for data");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -572,8 +577,15 @@ static keymaster_error_t TA_exportKey(TEE_Param params[TEE_NUM_PARAMS])
 		res = KM_ERROR_UNSUPPORTED_KEY_FORMAT;
 		goto out;
 	}
-	key_material = TEE_Malloc(key_to_export.key_material_size,
-						TEE_MALLOC_FILL_ZERO);
+
+	if (key_to_export.key_material_size) {
+		key_material = TEE_Malloc(key_to_export.key_material_size,
+							TEE_MALLOC_FILL_ZERO);
+	} else {
+		key_material = NULL;
+		EMSG("key_material_size is 0!");
+	}
+
 	if (!key_material) {
 		EMSG("Failed to allocate memory for key material");
 		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -937,7 +949,19 @@ static keymaster_error_t TA_begin(TEE_Param params[TEE_NUM_PARAMS])
 	in += TA_deserialize_param_set(in, in_end, &in_params, true, &res);
 	if (res != KM_ERROR_OK)
 		goto out;
-	key_material = TEE_Malloc(key.key_material_size, TEE_MALLOC_FILL_ZERO);
+
+	if (key.key_material_size) {
+		key_material = TEE_Malloc(key.key_material_size, TEE_MALLOC_FILL_ZERO);
+	} else {
+		key_material = NULL;
+		EMSG("key_material_size is 0!");
+	}
+	if (!key_material) {
+		EMSG("Failed to allocate memory for key material");
+		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+		goto out;
+	}
+
 	res = TA_restore_key(key_material, &key, &key_size,
 						 &type, &obj_h, &params_t);
 	if (res != KM_ERROR_OK)
@@ -1080,8 +1104,19 @@ static keymaster_error_t TA_update(TEE_Param params[TEE_NUM_PARAMS])
 		goto out;
 	}
 
-	key_material = TEE_Malloc((operation->key)->key_material_size,
-						TEE_MALLOC_FILL_ZERO);
+	if ((operation->key)->key_material_size) {
+		key_material = TEE_Malloc((operation->key)->key_material_size,
+							TEE_MALLOC_FILL_ZERO);
+	} else {
+		key_material = NULL;
+		EMSG("key_material_size is 0!");
+	}
+	if (!key_material) {
+		EMSG("Failed to allocate memory for key material");
+		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+		goto out;
+	}
+
 	res = TA_restore_key(key_material, operation->key, &key_size,
 						 &type, &obj_h, &params_t);
 	if (res != KM_ERROR_OK)
@@ -1097,7 +1132,12 @@ static keymaster_error_t TA_update(TEE_Param params[TEE_NUM_PARAMS])
 	if (input.data_length != 0 && type == TEE_TYPE_RSA_KEYPAIR)
 		operation->got_input = true;
 	out_size = TA_possibe_size(type, key_size, input, 0);
-	output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
+	if (out_size) {
+		output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
+	} else {
+		output.data = NULL;
+		EMSG("Output size is zero!");
+	}
 	if (!output.data) {
 		EMSG("Failed to allocate memory for output");
 		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -1195,8 +1235,18 @@ static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS])
 		res = KM_ERROR_INVALID_OPERATION_HANDLE;
 		goto out;
 	}
-	key_material = TEE_Malloc((operation->key)->key_material_size,
-					TEE_MALLOC_FILL_ZERO);
+	if ((operation->key)->key_material_size) {
+		key_material = TEE_Malloc((operation->key)->key_material_size,
+							TEE_MALLOC_FILL_ZERO);
+	} else {
+		key_material = NULL;
+		EMSG("key_material_size is 0!");
+	}
+	if (!key_material) {
+		EMSG("Failed to allocate memory for key material");
+		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+		goto out;
+	}
 	res = TA_restore_key(key_material, operation->key, &key_size, &type,
 						 &obj_h, &params_t);
 	if (res != KM_ERROR_OK)
@@ -1212,7 +1262,13 @@ static keymaster_error_t TA_finish(TEE_Param params[TEE_NUM_PARAMS])
 		tag_len = operation->mac_length / 8;/* from bits to bytes */
 
 	out_size = TA_possibe_size(type, key_size, input, tag_len);
-	output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
+	if (out_size) {
+		output.data = TEE_Malloc(out_size, TEE_MALLOC_FILL_ZERO);
+	} else {
+		output.data = NULL;
+		EMSG("Output size is zero!");
+	}
+
 	if (!output.data) {
 		EMSG("Failed to allocate memory for output");
 		res = KM_ERROR_MEMORY_ALLOCATION_FAILED;

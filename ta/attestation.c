@@ -634,6 +634,11 @@ TEE_Result TA_read_attest_cert(TEE_ObjectHandle attObj,
 		EMSG("Failed to read root certificate length, res=%x", res);
 		return res;
 	}
+	if(*buffSize == 0) {
+		EMSG("Root certificate length is 0!");
+		res = KM_ERROR_UNKNOWN_ERROR;
+		return res;
+	}
 
 	*buffer = TEE_Malloc(*buffSize, TEE_MALLOC_FILL_ZERO);
 	if (*buffer == NULL) {

@@ -74,7 +74,12 @@ keymaster_error_t TA_add_pkcs7_pad(keymaster_blob_t *input,
 		return KM_ERROR_OK;
 	pad = BLOCK_SIZE - (input->data_length % BLOCK_SIZE);
 	DMSG("PKCS7 ADD pad = %x", pad);
-	data = TEE_Malloc(pad + input->data_length, TEE_MALLOC_FILL_ZERO);
+	if (pad + input->data_length) {
+		data = TEE_Malloc(pad + input->data_length, TEE_MALLOC_FILL_ZERO);
+	} else {
+		data = NULL;
+		EMSG("padding data length is 0!");
+	}
 	if (!data) {
 		EMSG("Failed to allocate memory for buffer on padding adding");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -126,7 +131,12 @@ keymaster_error_t TA_do_rsa_pad(uint8_t **input, uint32_t *input_l,
 	uint32_t key_size_bytes = key_size / 8;
 
 	/* Freed before input blob is destroyed by caller */
-	buf = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
+	if (key_size_bytes) {
+		buf = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
+	} else {
+		buf = NULL;
+		EMSG("Key size is 0!");
+	}
 	if (!buf) {
 		EMSG("Failed to allocate memory for padded RSA input");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;
@@ -148,7 +158,13 @@ keymaster_error_t TA_do_rsa_pkcs_v1_5_rawpad(uint8_t **input, uint32_t *input_l,
 	uint32_t key_size_bytes = key_size / 8;
 
 	/* Freed before input blob is destroyed by caller */
-	buf = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
+	if (key_size_bytes) {
+		buf = TEE_Malloc(key_size_bytes, TEE_MALLOC_FILL_ZERO);
+	} else {
+		buf = NULL;
+		EMSG("Key size is 0!");
+	}
+
 	if (!buf) {
 		EMSG("Failed to allocate memory for padded RSA input");
 		return KM_ERROR_MEMORY_ALLOCATION_FAILED;

@@ -49,6 +49,11 @@ int TA_deserialize_blob(uint8_t *in, const uint8_t *end,
 	}
 	TEE_MemMove(&blob->data_length, in, sizeof(blob->data_length));
 	in += SIZE_LENGTH;
+	if (blob->data_length == 0) {
+			res = KM_ERROR_INVALID_ARGUMENT;
+			EMSG("Blob data length is 0");
+			return in - start;
+	}
 	if (IS_OUT_OF_BOUNDS(in, end, blob->data_length)) {
 		EMSG("Out of input array bounds on deserialization %lu", blob->data_length);
 		*res = KM_ERROR_INSUFFICIENT_BUFFER_SPACE;
@@ -154,8 +159,13 @@ int TA_deserialize_key_blob(const uint8_t *in, const uint8_t *end,
 		return SIZE_LENGTH;
 	}
 	/* Freed when deserialized key blob is destoyrd by caller */
-	key_material = TEE_Malloc(key_blob->key_material_size,
-							TEE_MALLOC_FILL_ZERO);
+	if (key_blob->key_material_size) {
+		key_material = TEE_Malloc(key_blob->key_material_size,
+								TEE_MALLOC_FILL_ZERO);
+	} else {
+		EMSG("key_material_size is 0!");
+		key_material = NULL;
+	}
 	if (!key_material) {
 		EMSG("Fialed to allocate memory for key_material");
 		*res = KM_ERROR_MEMORY_ALLOCATION_FAILED;
